@@ -28,8 +28,7 @@ class SampleProcessor:
         self.progress_callback = progress_callback
         self.verbose = verbose
 
-        # ★ 判断是否为通用模板模式（直接提取参数，不配对）
-        # 如果模板名称包含"通用模板"，则为单文件模式
+        # 判断是否为通用模板模式（直接提取参数，不配对）
         self.is_single_mode = ('通用模板' in template_name)
 
         self.samples = defaultdict(list)
@@ -53,11 +52,12 @@ class SampleProcessor:
         })
         self.stats['error'] += 1
 
-    def _add_warning(self, sample_id, file_path, message):
+    def _add_warning(self, sample_id, file_path, message, param_id=''):
         self.warnings.append({
             'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
             'sample_id': sample_id,
             'file_path': file_path,
+            'param_id': param_id,
             'message': message
         })
         self.stats['warning'] += 1
@@ -70,7 +70,6 @@ class SampleProcessor:
         self._stop_flag = True
 
     def scan_files(self):
-        """扫描目录下所有有效的CSV文件"""
         self._log("正在扫描CSV文件...")
         id_method = self.config.path_rules.get('ID提取方式', 'parent_folder_file_prefix')
         csv_files = glob.glob(os.path.join(self.root_dir, '**', '*.csv'), recursive=True)
@@ -86,12 +85,13 @@ class SampleProcessor:
             valid_count += 1
             sections = parser.get_section_info()
 
-            # ★ 通用模板模式：直接用文件名（不含扩展名）作为样品ID
+            # 单品模板模式：用相对路径作为样品ID（避免同名文件冲突）
             if self.is_single_mode:
-                sample_id = os.path.splitext(os.path.basename(file_path))[0]
-                # 如果文件名太长，截取前50个字符
-                if len(sample_id) > 50:
-                    sample_id = sample_id[:50]
+                # 使用相对于根目录的路径作为唯一标识
+                rel_path = os.path.relpath(file_path, self.root_dir)
+                sample_id = rel_path.replace(os.sep, '_').replace('.csv', '')
+                if len(sample_id) > 80:
+                    sample_id = sample_id[:80]
             else:
                 # 标准模板模式：从路径提取样品ID
                 sample_id = extract_sample_id(file_path, id_method)
@@ -100,7 +100,7 @@ class SampleProcessor:
                     self._add_warning('unknown', file_path, f"无法提取样品ID: {file_path}")
                     continue
 
-            # ★ 通用模板模式：不区分松质/皮质，统一为 'single'
+            # 单品模板模式：不区分松质/皮质，统一为 'single'
             if self.is_single_mode:
                 file_type = 'single'
             else:
@@ -119,7 +119,6 @@ class SampleProcessor:
         self._log(f"有效样品: {len(self.samples)} 个，有效文件: {valid_count} 个")
 
     def process_all(self):
-        """处理所有样品"""
         total = len(self.samples)
         processed = 0
 
@@ -129,18 +128,11 @@ class SampleProcessor:
             processed += 1
             self._progress(processed, total, f"处理: {sample_id}")
 
-            # ★ 通用模板模式：每个文件独立处理
             if self.is_single_mode:
                 self._log(f"处理样品: {sample_id} (文件数: {len(files)})")
                 for file_info in files:
                     parser = file_info['parser']
-                    row_data, sample_errors, sample_warnings = self._extract_row_data_single(
-                        sample_id, parser
-                    )
-                    self.results.append(row_data)
-                    self.errors.extend(sample_errors)
-                    self.warnings.extend(sample_warnings)
-                    self.stats['success'] += 1
+                    self._extract_row_data_single(sample_id, parser)
             else:
                 # 标准模板模式：配对处理
                 has_trab = any(f['type'] == 'trabecular' for f in files)
@@ -162,12 +154,7 @@ class SampleProcessor:
                     self._log(f"  皮质骨parser: {os.path.basename(cort_parser.file_path)}", 'detail')
 
                 if trab_parser or cort_parser:
-                    row_data, sample_errors, sample_warnings = self._extract_row_data_pair(
-                        sample_id, trab_parser, cort_parser
-                    )
-                    self.results.append(row_data)
-                    self.errors.extend(sample_errors)
-                    self.warnings.extend(sample_warnings)
+                    self._extract_row_data_pair(sample_id, trab_parser, cort_parser)
                     self.stats['success'] += 1
 
                     if not (trab_parser and cort_parser):
@@ -186,10 +173,7 @@ class SampleProcessor:
                   f"警告 {self.stats['warning']}, 错误 {self.stats['error']}")
 
     def _extract_row_data_single(self, sample_id, parser):
-        """
-        ★ 通用模板模式：单个CSV独立提取
-        所有参数从同一个parser提取
-        """
+        """★ 单品模板模式：单个CSV独立提取"""
         row_data = {
             'DATE_META': parser.get_date() if parser else None,
             'SAMPLE_ID_META': sample_id,
@@ -200,8 +184,6 @@ class SampleProcessor:
             self._log(f"  📋 开始按模板顺序提取参数 (共 {len(columns)} 列):", 'detail')
 
         extracted_values = {}
-        errors = []
-        warnings = []
 
         for col_def in columns:
             extract_id = col_def['extract_id']
@@ -210,26 +192,31 @@ class SampleProcessor:
 
             rule = self.config.get_extract_rule(extract_id)
             if not rule:
-                warnings.append({
-                    'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                    'sample_id': sample_id,
-                    'file_path': parser.file_path if parser else '',
-                    'param_id': extract_id,
-                    'message': f"未知提取指令: {extract_id}"
-                })
+                self._add_warning(
+                    sample_id,
+                    parser.file_path if parser else '',
+                    f"未知提取指令: {extract_id}",
+                    extract_id
+                )
                 continue
 
             source = rule['source']
             param_id = rule['param_id']
             value = None
 
-            # ★ 单品模式：根据来源从parser提取
             if source == '3D':
                 value = parser.extract_3d_value(param_id)
             elif source == '2D':
                 value = parser.extract_2d_value(param_id)
             elif source == 'Histogram':
                 value = parser.extract_histogram_value('BMD')
+                if value is None:
+                    self._add_warning(
+                        sample_id,
+                        parser.file_path if parser else '',
+                        f"直方图 BMD 提取失败: {extract_id} 返回 None",
+                        extract_id
+                    )
             else:
                 value = None
 
@@ -240,15 +227,14 @@ class SampleProcessor:
                 self._log(f"      {status} {extract_id} ← {source} = {value}", 'detail')
 
             if value is None and source != 'Histogram':
-                errors.append({
-                    'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                    'sample_id': sample_id,
-                    'file_path': parser.file_path if parser else '',
-                    'param_id': extract_id,
-                    'message': f"提取失败: {extract_id} 返回 None"
-                })
+                self._add_error(
+                    sample_id,
+                    parser.file_path if parser else '',
+                    extract_id,
+                    f"提取失败: {extract_id} 返回 None"
+                )
 
-        # 计算参数（如果有）
+        # 计算参数
         for col_def in columns:
             extract_id = col_def['extract_id']
             if extract_id in self.config.calc_params:
@@ -261,44 +247,64 @@ class SampleProcessor:
         for extract_id, value in extracted_values.items():
             row_data[extract_id] = value
 
+        self.results.append(row_data)
+
         extracted_count = sum(1 for v in extracted_values.values() if v is not None)
         failed_count = len(extracted_values) - extracted_count
         self._log(f"  ✅ 提取汇总: ✓ {extracted_count} 个参数, ✗ {failed_count} 个参数缺失",
                   'success' if failed_count == 0 else 'warning')
-        return row_data, errors, warnings
 
     def _calc_param_single(self, calc_id, extracted_values, sample_id, parser):
         """单品模式的计算参数"""
         calc_def = self.config.get_calc_param(calc_id)
         if not calc_def:
+            self._add_warning(
+                sample_id,
+                parser.file_path if parser else '',
+                f"计算参数定义缺失: {calc_id}",
+                calc_id
+            )
             return None
 
         formula = calc_def.get('formula', '')
         placeholders = re.findall(r'\{([^}]+)\}', formula)
 
         deps = {}
+        missing = []
         for ph in placeholders:
             if ph in extracted_values:
                 deps[ph] = extracted_values[ph]
             else:
                 deps[ph] = None
+                missing.append(ph)
 
-        for ph in placeholders:
-            if deps.get(ph) is None:
-                return None
+        if missing:
+            self._add_warning(
+                sample_id,
+                parser.file_path if parser else '',
+                f"计算参数 {calc_id} 依赖缺失: {', '.join(missing)}",
+                calc_id
+            )
+            return None
 
         expr = formula
         for ph in placeholders:
+            if deps.get(ph) is None:
+                return None
             expr = expr.replace(f'{{{ph}}}', str(deps[ph]))
         try:
             return eval(expr)
-        except:
+        except Exception as e:
+            self._add_error(
+                sample_id,
+                parser.file_path if parser else '',
+                calc_id,
+                f"计算失败: {calc_id} - {e}"
+            )
             return None
 
     def _extract_row_data_pair(self, sample_id, trab_parser, cort_parser):
-        """
-        ★ 标准模板模式：松质+皮质配对提取
-        """
+        """★ 标准模板模式：松质+皮质配对提取"""
         parser = trab_parser or cort_parser
         row_data = {
             'DATE_META': parser.get_date() if parser else None,
@@ -310,8 +316,6 @@ class SampleProcessor:
             self._log(f"  📋 开始按模板顺序提取参数 (共 {len(columns)} 列):", 'detail')
 
         extracted_values = {}
-        errors = []
-        warnings = []
 
         for col_def in columns:
             extract_id = col_def['extract_id']
@@ -320,13 +324,12 @@ class SampleProcessor:
 
             rule = self.config.get_extract_rule(extract_id)
             if not rule:
-                warnings.append({
-                    'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                    'sample_id': sample_id,
-                    'file_path': parser.file_path if parser else '',
-                    'param_id': extract_id,
-                    'message': f"未知提取指令: {extract_id}"
-                })
+                self._add_warning(
+                    sample_id,
+                    parser.file_path if parser else '',
+                    f"未知提取指令: {extract_id}",
+                    extract_id
+                )
                 continue
 
             source = rule['source']
@@ -339,6 +342,13 @@ class SampleProcessor:
                         value = trab_parser.extract_3d_value(param_id)
                     elif source == 'Histogram':
                         value = trab_parser.extract_histogram_value('BMD')
+                        if value is None:
+                            self._add_warning(
+                                sample_id,
+                                trab_parser.file_path,
+                                f"直方图 BMD 提取失败: {extract_id}",
+                                extract_id
+                            )
                 else:
                     value = None
             elif '_cort_' in extract_id:
@@ -349,6 +359,13 @@ class SampleProcessor:
                         value = cort_parser.extract_2d_value(param_id)
                     elif source == 'Histogram':
                         value = cort_parser.extract_histogram_value('BMD')
+                        if value is None:
+                            self._add_warning(
+                                sample_id,
+                                cort_parser.file_path,
+                                f"直方图 BMD 提取失败: {extract_id}",
+                                extract_id
+                            )
                 else:
                     value = None
             else:
@@ -367,13 +384,12 @@ class SampleProcessor:
                     file_path = trab_parser.file_path
                 elif '_cort_' in extract_id and cort_parser:
                     file_path = cort_parser.file_path
-                errors.append({
-                    'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                    'sample_id': sample_id,
-                    'file_path': file_path,
-                    'param_id': extract_id,
-                    'message': f"提取失败: {extract_id} 返回 None"
-                })
+                self._add_error(
+                    sample_id,
+                    file_path,
+                    extract_id,
+                    f"提取失败: {extract_id} 返回 None"
+                )
 
         # 计算参数
         for col_def in columns:
@@ -388,51 +404,63 @@ class SampleProcessor:
         for extract_id, value in extracted_values.items():
             row_data[extract_id] = value
 
+        self.results.append(row_data)
+
         extracted_count = sum(1 for v in extracted_values.values() if v is not None)
         failed_count = len(extracted_values) - extracted_count
         self._log(f"  ✅ 提取汇总: ✓ {extracted_count} 个参数, ✗ {failed_count} 个参数缺失",
                   'success' if failed_count == 0 else 'warning')
-        return row_data, errors, warnings
 
     def _calc_param_pair(self, calc_id, extracted_values, sample_id, parser):
         """配对模式的计算参数"""
         calc_def = self.config.get_calc_param(calc_id)
         if not calc_def:
+            self._add_warning(
+                sample_id,
+                parser.file_path if parser else '',
+                f"计算参数定义缺失: {calc_id}",
+                calc_id
+            )
             return None
 
         formula = calc_def.get('formula', '')
         placeholders = re.findall(r'\{([^}]+)\}', formula)
 
         deps = {}
-        missing_deps = []
+        missing = []
         for ph in placeholders:
             if ph in extracted_values:
                 deps[ph] = extracted_values[ph]
             else:
                 deps[ph] = None
-                missing_deps.append(ph)
+                missing.append(ph)
 
-        if missing_deps:
-            for ph in missing_deps:
-                self._add_warning(
-                    sample_id,
-                    parser.file_path if parser else '',
-                    f"计算参数 {calc_id} 依赖 {ph} 缺失"
-                )
+        if missing:
+            self._add_warning(
+                sample_id,
+                parser.file_path if parser else '',
+                f"计算参数 {calc_id} 依赖缺失: {', '.join(missing)}",
+                calc_id
+            )
             return None
 
         expr = formula
         for ph in placeholders:
+            if deps.get(ph) is None:
+                return None
             expr = expr.replace(f'{{{ph}}}', str(deps[ph]))
         try:
             return eval(expr)
         except Exception as e:
-            self._add_error(sample_id, parser.file_path if parser else '', calc_id,
-                           f"计算失败: {calc_id} - {e}")
+            self._add_error(
+                sample_id,
+                parser.file_path if parser else '',
+                calc_id,
+                f"计算失败: {calc_id} - {e}"
+            )
             return None
 
     def export_to_excel(self, output_path):
-        """导出结果到Excel"""
         if not self.results:
             self._log("没有数据可导出")
             return False
@@ -453,7 +481,6 @@ class SampleProcessor:
         return True
 
     def export_errors(self, output_path):
-        """导出错误和警告日志"""
         if not self.errors and not self.warnings:
             self._log("没有错误或警告可导出")
             return False
