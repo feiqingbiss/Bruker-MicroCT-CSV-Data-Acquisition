@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-GUI界面模块 - 亮色主题（切换模板自动刷新）
+GUI界面模块 - 亮色主题（OptionMenu 无黑边）
 """
 
 import os
@@ -20,7 +20,7 @@ from template_editor import TemplateEditor
 class MicroCTApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("MicroCT 骨参数自动提取工具 v2.0")
+        self.root.title("MicroCT 骨参数自动提取工具 v2.5")
         self.root.geometry("1150x820")
         self.root.minsize(1050, 750)
 
@@ -61,7 +61,7 @@ class MicroCTApp:
                                 font=('微软雅黑', 22, 'bold'), foreground='#1a56db')
         title_label.pack(side=tk.LEFT)
         
-        version_label = ttk.Label(header_frame, text="v2.0", 
+        version_label = ttk.Label(header_frame, text="v2.5", 
                                    font=('微软雅黑', 12), foreground='#94a3b8')
         version_label.pack(side=tk.LEFT, padx=(10, 0))
         
@@ -213,14 +213,11 @@ class MicroCTApp:
         self.log_text.tag_config('error', foreground='#dc2626')
         self.log_text.tag_config('detail', foreground='#94a3b8')
 
-        self._log("🚀 欢迎使用 MicroCT 骨参数自动提取工具 v2.0", 'info')
+        self._log("🚀 欢迎使用 MicroCT 骨参数自动提取工具 v2.5", 'info')
         self._log("💡 请选择输入目录并点击「开始处理」", 'info')
 
-    # ★ 模板选择回调：切换模板时自动刷新配置 ★
     def _on_template_selected(self, value):
         self.template_name.set(value)
-        self._log(f"📋 切换到模板: {value}", 'info')
-        # ★ 重新加载配置，刷新模板定义 ★
         self._load_config()
 
     def _refresh_templates(self):
@@ -258,7 +255,6 @@ class MicroCTApp:
             for item in self.template_list:
                 menu.add_command(label=item, command=lambda v=item: self._on_template_selected(v))
             
-            # ★ 如果当前选中的模板名不在列表中，切换到第一个 ★
             if self.template_name.get() not in self.template_list:
                 if self.template_list:
                     self.template_name.set(self.template_list[0])
@@ -351,13 +347,13 @@ class MicroCTApp:
 
     def _show_help(self):
         help_text = """
-🦴 MicroCT 骨参数自动提取工具 v2.0
+🦴 MicroCT 骨参数自动提取工具 v2.5
 
 【📖 使用说明】
 1. 选择或创建配置文件（.xlsx格式），点击"创建默认"生成
 2. 选择模板方案：
    • 标准模板（长骨专用）— 松质+皮质配对
-   • 通用模板（直接提取参数）— 单文件独立提取
+   • 通用模板（直接提取参数）— 单文件独立提取，多个3D结果水平展开
 3. 选择包含CSV文件的顶层输入目录
 4. 指定输出Excel文件路径（或勾选自动生成）
 5. 点击"开始处理"
@@ -374,6 +370,11 @@ class MicroCTApp:
 
 【📁 文件支持】
 支持 .ctan.csv, .batman.csv 等任意 .csv 结果文件
+
+【✨ v2.5 新特性】
+- 支持 Index / HU / Attenuation 直方图参数
+- 通用模板自动检测多个3D结果，水平展开
+- 每个3D结果独立绑定直方图和2D分析，不共享
 """
         messagebox.showinfo("帮助", help_text)
 

@@ -2,7 +2,7 @@
 """
 数据处理核心模块 - 支持两种模式
 1. 标准模板（长骨专用）区分松质骨皮质骨参数：松质+皮质配对
-2. 通用模板（直接提取参数）：每个CSV独立提取，不配对
+2. 通用模板（直接提取参数）：每个3D结果独立绑定直方图和2D分析，水平展开
 """
 
 import os
@@ -28,7 +28,6 @@ class SampleProcessor:
         self.progress_callback = progress_callback
         self.verbose = verbose
 
-        # 判断是否为通用模板模式（直接提取参数，不配对）
         self.is_single_mode = ('通用模板' in template_name)
 
         self.samples = defaultdict(list)
@@ -85,26 +84,27 @@ class SampleProcessor:
             valid_count += 1
             sections = parser.get_section_info()
 
-            # 单品模板模式：用相对路径作为样品ID（避免同名文件冲突）
             if self.is_single_mode:
-                # 使用相对于根目录的路径作为唯一标识
                 rel_path = os.path.relpath(file_path, self.root_dir)
                 sample_id = rel_path.replace(os.sep, '_').replace('.csv', '')
                 if len(sample_id) > 80:
                     sample_id = sample_id[:80]
             else:
-                # 标准模板模式：从路径提取样品ID
                 sample_id = extract_sample_id(file_path, id_method)
                 if not sample_id:
                     self._log(f"警告: 无法提取样品ID: {file_path}", 'warning')
                     self._add_warning('unknown', file_path, f"无法提取样品ID: {file_path}")
                     continue
 
-            # 单品模板模式：不区分松质/皮质，统一为 'single'
             if self.is_single_mode:
                 file_type = 'single'
             else:
                 file_type = 'cortical' if sections['has_2d'] else 'trabecular'
+
+            if self.is_single_mode:
+                _3d_count = parser.get_3d_count()
+                if _3d_count > 1:
+                    self._log(f"  检测到 {_3d_count} 个3D分析结果，将分别提取", 'detail')
 
             self._log(f"  识别: {os.path.basename(file_path)} → {file_type}", 'detail')
 
@@ -132,7 +132,18 @@ class SampleProcessor:
                 self._log(f"处理样品: {sample_id} (文件数: {len(files)})")
                 for file_info in files:
                     parser = file_info['parser']
-                    self._extract_row_data_single(sample_id, parser)
+                    _3d_count = parser.get_3d_count()
+                    if _3d_count <= 1:
+                        self._extract_row_data_single(sample_id, parser, result_index=0)
+                        self.stats['success'] += 1
+                    else:
+                        self._log(f"  📊 该文件包含 {_3d_count} 个3D分析结果", 'info')
+                        for idx in range(_3d_count):
+                            result_suffix = f"_R{idx+1}"
+                            result_id = sample_id + result_suffix
+                            self._log(f"    提取结果 {idx+1}/{_3d_count}: {result_id}", 'detail')
+                            self._extract_row_data_single(result_id, parser, result_index=idx)
+                            self.stats['success'] += 1
             else:
                 # 标准模板模式：配对处理
                 has_trab = any(f['type'] == 'trabecular' for f in files)
@@ -172,8 +183,8 @@ class SampleProcessor:
         self._log(f"处理完成: 成功 {self.stats['success']}, 跳过 {self.stats['skipped']}, "
                   f"警告 {self.stats['warning']}, 错误 {self.stats['error']}")
 
-    def _extract_row_data_single(self, sample_id, parser):
-        """★ 单品模板模式：单个CSV独立提取"""
+    def _extract_row_data_single(self, sample_id, parser, result_index=0):
+        """单品模板模式：单个CSV独立提取，支持指定3D结果索引，绑定直方图和2D"""
         row_data = {
             'DATE_META': parser.get_date() if parser else None,
             'SAMPLE_ID_META': sample_id,
@@ -205,16 +216,16 @@ class SampleProcessor:
             value = None
 
             if source == '3D':
-                value = parser.extract_3d_value(param_id)
+                value = parser.extract_3d_value(param_id, result_index)
             elif source == '2D':
-                value = parser.extract_2d_value(param_id)
+                value = parser.extract_2d_value(param_id, result_index)
             elif source == 'Histogram':
-                value = parser.extract_histogram_value('BMD')
+                value = parser.extract_histogram_value(param_id, result_index)
                 if value is None:
                     self._add_warning(
                         sample_id,
                         parser.file_path if parser else '',
-                        f"直方图 BMD 提取失败: {extract_id} 返回 None",
+                        f"直方图提取失败: {extract_id}",
                         extract_id
                     )
             else:
@@ -224,7 +235,8 @@ class SampleProcessor:
 
             if self.verbose:
                 status = '✓' if value is not None else '✗'
-                self._log(f"      {status} {extract_id} ← {source} = {value}", 'detail')
+                idx_info = f"[{result_index+1}]" if result_index > 0 else ""
+                self._log(f"      {status} {extract_id}{idx_info} ← {source} = {value}", 'detail')
 
             if value is None and source != 'Histogram':
                 self._add_error(
@@ -255,7 +267,6 @@ class SampleProcessor:
                   'success' if failed_count == 0 else 'warning')
 
     def _calc_param_single(self, calc_id, extracted_values, sample_id, parser):
-        """单品模式的计算参数"""
         calc_def = self.config.get_calc_param(calc_id)
         if not calc_def:
             self._add_warning(
@@ -304,7 +315,7 @@ class SampleProcessor:
             return None
 
     def _extract_row_data_pair(self, sample_id, trab_parser, cort_parser):
-        """★ 标准模板模式：松质+皮质配对提取"""
+        """标准模板模式：松质+皮质配对提取"""
         parser = trab_parser or cort_parser
         row_data = {
             'DATE_META': parser.get_date() if parser else None,
@@ -341,12 +352,12 @@ class SampleProcessor:
                     if source == '3D':
                         value = trab_parser.extract_3d_value(param_id)
                     elif source == 'Histogram':
-                        value = trab_parser.extract_histogram_value('BMD')
+                        value = trab_parser.extract_histogram_value(param_id)
                         if value is None:
                             self._add_warning(
                                 sample_id,
                                 trab_parser.file_path,
-                                f"直方图 BMD 提取失败: {extract_id}",
+                                f"直方图提取失败: {extract_id}",
                                 extract_id
                             )
                 else:
@@ -358,12 +369,12 @@ class SampleProcessor:
                     elif source == '2D':
                         value = cort_parser.extract_2d_value(param_id)
                     elif source == 'Histogram':
-                        value = cort_parser.extract_histogram_value('BMD')
+                        value = cort_parser.extract_histogram_value(param_id)
                         if value is None:
                             self._add_warning(
                                 sample_id,
                                 cort_parser.file_path,
-                                f"直方图 BMD 提取失败: {extract_id}",
+                                f"直方图提取失败: {extract_id}",
                                 extract_id
                             )
                 else:
@@ -412,7 +423,6 @@ class SampleProcessor:
                   'success' if failed_count == 0 else 'warning')
 
     def _calc_param_pair(self, calc_id, extracted_values, sample_id, parser):
-        """配对模式的计算参数"""
         calc_def = self.config.get_calc_param(calc_id)
         if not calc_def:
             self._add_warning(
@@ -470,11 +480,66 @@ class SampleProcessor:
         col_names = [c['column_name'] for c in columns]
         col_extract_ids = [c['extract_id'] for c in columns]
 
+        # 准备数据行
         data_rows = []
         for row_data in self.results:
             row = [row_data.get(eid, None) for eid in col_extract_ids]
             data_rows.append(row)
 
+        # ---- 通用模板：水平展开多个结果 ----
+        if self.is_single_mode:
+            sample_id_col_index = 1
+            base_cols_count = 2
+            param_cols = col_names[base_cols_count:]
+
+            # 按基础样品ID分组
+            groups = {}
+            for row in data_rows:
+                sample_id = row[sample_id_col_index] if sample_id_col_index < len(row) else ''
+                base_sample = sample_id
+                if sample_id:
+                    match = re.match(r'(.+)_R\d+$', sample_id)
+                    if match:
+                        base_sample = match.group(1)
+                    else:
+                        base_sample = sample_id
+                if base_sample not in groups:
+                    groups[base_sample] = []
+                groups[base_sample].append(row)
+
+            # 构建扩展后的行数据
+            expanded_rows = []
+            for base_sample, rows in groups.items():
+                date_val = rows[0][0] if rows[0] else None
+                new_row = [date_val, base_sample]
+
+                for idx, row in enumerate(rows):
+                    param_values = row[base_cols_count:] if len(row) > base_cols_count else []
+                    while len(param_values) < len(param_cols):
+                        param_values.append(None)
+                    new_row.extend(param_values)
+
+                    if idx < len(rows) - 1:
+                        new_row.extend([None, None])
+
+                expanded_rows.append(new_row)
+
+            # 构建扩展后的列名
+            first_group_rows = groups[next(iter(groups))] if groups else []
+            num_results = len(first_group_rows)
+            new_col_names = ['日期', '样品ID']
+            for idx in range(num_results):
+                suffix = f"_结果{idx+1}" if num_results > 1 else ""
+                for param in param_cols:
+                    new_col_names.append(f"{param}{suffix}")
+                if idx < num_results - 1:
+                    new_col_names.append("")
+                    new_col_names.append("")
+
+            data_rows = expanded_rows
+            col_names = new_col_names
+
+        # ---- 写入Excel ----
         df = pd.DataFrame(data_rows, columns=col_names)
         df.to_excel(output_path, index=False, sheet_name='结果')
         self._log(f"已导出到: {output_path}")

@@ -1,8 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-配置加载模块 - 包含全部2D/3D参数，内置两套模板（均无股骨列）
-- 标准模板（长骨专用）区分松质骨皮质骨参数
-- 通用模板（直接提取参数）
+配置加载模块 - 包含全部2D/3D参数以及多种直方图参数（BMD/Index/HU/Attenuation）
 """
 
 import os
@@ -116,7 +114,7 @@ class ConfigLoader:
 
 
 def generate_default_config(path):
-    """生成默认配置文件，包含全部参数，内置两套模板（均无股骨列）"""
+    """生成默认配置文件，包含全部2D/3D参数以及多种直方图参数"""
 
     # ---- 完整的2D参数（37个） ----
     params_2d = [
@@ -160,7 +158,7 @@ def generate_default_config(path):
         ('iPm', 'Intersection perimeter', 'i.Pm', 'um'),
     ]
 
-    # ---- 完整的3D参数 ----
+    # ---- 完整的3D参数（含 DA/DA_ratio） ----
     params_3d = [
         ('TV', 'Tissue volume', 'TV', 'um^3'),
         ('BV', 'Bone volume', 'BV', 'um^3'),
@@ -179,7 +177,7 @@ def generate_default_config(path):
         ('CrdZ3D', 'Centroid (z)', 'Crd.Z', 'um'),
         ('SMI', 'Structure model index', 'SMI', ''),
         ('DA', 'Degree of anisotropy', 'DA', ''),
-        ('DA_ratio', 'Degree of anisotropy (ratio)', 'DA', ''),
+        ('DA_ratio', 'Degree of anisotropy (ratio)', 'DA', ''),  # csv_column 设为 DA
         ('FD3D', 'Fractal dimension', 'FD', ''),
         ('ObjN3D', 'Number of objects', 'Obj.N', ''),
         ('PoNcl3D', 'Number of closed pores', 'Po.N(cl)', ''),
@@ -208,6 +206,14 @@ def generate_default_config(path):
         ('PrInyz3D', 'Product of inertia (yz)', 'Pr.In(yz)', 'um^5'),
     ]
 
+    # ---- 直方图参数（多种单位） ----
+    params_hist = [
+        ('BMD', 'BMD', 'BMD', 'g/cm3'),
+        ('Index', 'Index', 'Index', ''),
+        ('HU', 'HU', 'HU', 'HU'),
+        ('Attenuation', 'Attenuation', 'Attenuation', ''),
+    ]
+
     with pd.ExcelWriter(path, engine='openpyxl') as writer:
 
         # ---- ParamDef ----
@@ -233,15 +239,16 @@ def generate_default_config(path):
                 '数据类型': 'float',
                 '来源段': '3D'
             })
-        param_def_rows.append({
-            '参数ID': 'BMD',
-            '完整名称': 'BMD',
-            'CSV列名': 'BMD',
-            '别名': '',
-            '单位': 'g/cm3',
-            '数据类型': 'float',
-            '来源段': 'Histogram'
-        })
+        for pid, name, col, unit in params_hist:
+            param_def_rows.append({
+                '参数ID': pid,
+                '完整名称': name,
+                'CSV列名': col,
+                '别名': '',
+                '单位': unit,
+                '数据类型': 'float',
+                '来源段': 'Histogram'
+            })
         pd.DataFrame(param_def_rows).to_excel(writer, sheet_name='ParamDef', index=False)
 
         # ---- ExtractRules ----
@@ -283,25 +290,26 @@ def generate_default_config(path):
                 '偏移量': 0
             })
 
-        # 直方图 BMD
-        extract_rows.append({
-            '指令ID': 'BMD_trab_H',
-            '参数ID': 'BMD',
-            '来源段': 'Histogram',
-            '单位': 'g/cm3',
-            '数据类型': 'float',
-            '提取方式': 'direct',
-            '偏移量': 0
-        })
-        extract_rows.append({
-            '指令ID': 'BMD_cort_H',
-            '参数ID': 'BMD',
-            '来源段': 'Histogram',
-            '单位': 'g/cm3',
-            '数据类型': 'float',
-            '提取方式': 'direct',
-            '偏移量': 0
-        })
+        # ---- 直方图参数（松质/皮质各自独立） ----
+        for pid, name, col, unit in params_hist:
+            extract_rows.append({
+                '指令ID': f'{pid}_trab_H',
+                '参数ID': pid,
+                '来源段': 'Histogram',
+                '单位': unit,
+                '数据类型': 'float',
+                '提取方式': 'direct',
+                '偏移量': 0
+            })
+            extract_rows.append({
+                '指令ID': f'{pid}_cort_H',
+                '参数ID': pid,
+                '来源段': 'Histogram',
+                '单位': unit,
+                '数据类型': 'float',
+                '提取方式': 'direct',
+                '偏移量': 0
+            })
 
         pd.DataFrame(extract_rows).to_excel(writer, sheet_name='ExtractRules', index=False)
 
@@ -314,9 +322,9 @@ def generate_default_config(path):
         ])
         calc_params.to_excel(writer, sheet_name='CalcParams', index=False)
 
-        # ---- TemplateDef（两套模板，均无“股骨”列） ----
+        # ---- TemplateDef（标准模板 + 单品模板） ----
         template_def_rows = [
-            # ★ 模板1：标准模板（长骨专用，区分松质骨皮质骨参数）
+            # 模板1：标准模板（长骨专用，松质+皮质）
             {'模板名称': '标准模板（长骨专用）区分松质骨皮质骨参数', '列名': '日期', '提取指令': 'DATE_META', '顺序': 1},
             {'模板名称': '标准模板（长骨专用）区分松质骨皮质骨参数', '列名': '样品ID', '提取指令': 'SAMPLE_ID_META', '顺序': 2},
             {'模板名称': '标准模板（长骨专用）区分松质骨皮质骨参数', '列名': 'BMD (g/cm3)', '提取指令': 'BMD_trab_H', '顺序': 3},
@@ -339,10 +347,7 @@ def generate_default_config(path):
             {'模板名称': '标准模板（长骨专用）区分松质骨皮质骨参数', '列名': 'B.Ar/T.Ar(%)', '提取指令': 'BArRatio_calc', '顺序': 20},
             {'模板名称': '标准模板（长骨专用）区分松质骨皮质骨参数', '列名': 'T.Pm(um)', '提取指令': 'TPm_cort_2D', '顺序': 21},
             {'模板名称': '标准模板（长骨专用）区分松质骨皮质骨参数', '列名': 'M.Pm(um)', '提取指令': 'BPm_cort_2D', '顺序': 22},
-        ]
-
-        # ★ 模板2：通用模板（直接提取参数，不区分松质/皮质）
-        template_def_single_rows = [
+            # 模板2：单品模板（全部3D参数 + 直方图，无2D）
             {'模板名称': '通用模板（直接提取参数）', '列名': '日期', '提取指令': 'DATE_META', '顺序': 1},
             {'模板名称': '通用模板（直接提取参数）', '列名': '样品ID', '提取指令': 'SAMPLE_ID_META', '顺序': 2},
             {'模板名称': '通用模板（直接提取参数）', '列名': 'BMD (g/cm3)', '提取指令': 'BMD_trab_H', '顺序': 3},
@@ -363,9 +368,7 @@ def generate_default_config(path):
             {'模板名称': '通用模板（直接提取参数）', '列名': 'Po(tot)(%)', '提取指令': 'Po_tot_trab_3D', '顺序': 18},
         ]
 
-        # 合并两个模板
-        all_template_rows = template_def_rows + template_def_single_rows
-        template_def = pd.DataFrame(all_template_rows)
+        template_def = pd.DataFrame(template_def_rows)
         template_def.to_excel(writer, sheet_name='TemplateDef', index=False)
 
         # ---- PathRules ----
