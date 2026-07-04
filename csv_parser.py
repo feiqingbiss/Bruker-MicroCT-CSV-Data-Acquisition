@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-CSV解析模块 - 支持 3D 完整名匹配
+CSV解析模块 - 增强2D数据行检测
 """
 
 import os
@@ -44,15 +44,18 @@ class CSVParser:
         }
         for i, line in enumerate(self.lines):
             stripped = line.strip()
+            # 2D
             if '2D analysis' in stripped:
                 for j in range(i, min(i+80, len(self.lines))):
                     if 'File name,Z position' in self.lines[j]:
                         sections['has_2d'] = True
                         sections['2d_param_row_idx'] = j
-                        for k in range(j+1, len(self.lines)):
+                        # 查找数据起始行
+                        for k in range(j + 1, len(self.lines)):
                             lk = self.lines[k].strip()
                             if not lk:
                                 continue
+                            # 跳过单位行和缩写行
                             if 'um' in lk or '%' in lk or '1/um' in lk:
                                 continue
                             if 'Pos.Z' in lk or 'Obj.N' in lk:
@@ -60,6 +63,7 @@ class CSVParser:
                             parts = lk.split(',')
                             if len(parts) >= 2:
                                 first = parts[0].strip()
+                                # 检查是否是数据行：以图片扩展名结尾，或包含下划线和数字
                                 if re.search(r'\.(bmp|tif|tiff|jpg|jpeg|png)$', first, re.I):
                                     try:
                                         if parts[1].strip():
@@ -68,9 +72,19 @@ class CSVParser:
                                         break
                                     except:
                                         pass
+                                # 如果第一列包含下划线和数字，也尝试作为数据行
+                                elif '_' in first and any(c.isdigit() for c in first):
+                                    try:
+                                        if parts[1].strip():
+                                            float(parts[1].strip())
+                                        sections['2d_data_start_idx'] = k
+                                        break
+                                    except:
+                                        pass
                         break
+                # 如果还没有找到数据行，尝试更宽松的匹配
                 if sections['has_2d'] and sections['2d_data_start_idx'] is None:
-                    for k in range(sections['2d_param_row_idx']+1, len(self.lines)):
+                    for k in range(sections['2d_param_row_idx'] + 1, len(self.lines)):
                         lk = self.lines[k].strip()
                         if not lk:
                             continue
@@ -81,7 +95,8 @@ class CSVParser:
                         parts = lk.split(',')
                         if len(parts) >= 2:
                             first = parts[0].strip()
-                            if '_' in first and any(c.isdigit() for c in first):
+                            # 如果第一列包含下划线或数字，视为潜在数据行
+                            if '_' in first or any(c.isdigit() for c in first):
                                 try:
                                     if parts[1].strip():
                                         float(parts[1].strip())
@@ -89,6 +104,7 @@ class CSVParser:
                                     break
                                 except:
                                     pass
+            # 3D
             if '3D analysis' in stripped or '3D-analysis summary' in stripped:
                 sections['has_3d'] = True
                 for j in range(i, min(i+80, len(self.lines))):
@@ -109,12 +125,15 @@ class CSVParser:
                                 except:
                                     pass
                         break
+            # Histogram
             if 'Histogram' in stripped and 'space' in stripped.lower():
                 sections['has_histogram'] = True
                 for j in range(i, min(i+60, len(self.lines))):
                     if 'Unit:' in self.lines[j]:
                         unit_line = self.lines[j].strip()
                         unit = unit_line.split('Unit:')[-1].strip().strip(',')
+                        # 记录直方图单位
+                        sections['histogram_unit'] = unit
                         if unit == 'BMD':
                             for k in range(j, min(j+25, len(self.lines))):
                                 if self.lines[k].strip().startswith('Mean,'):
@@ -125,6 +144,7 @@ class CSVParser:
                                             self.bmd_mean = val
                                     break
                             break
+            # Date
             if 'Date and time' in stripped:
                 parts = stripped.split(',')
                 if len(parts) >= 2:

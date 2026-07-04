@@ -21,8 +21,8 @@ class MicroCTApp:
     def __init__(self, root):
         self.root = root
         self.root.title("MicroCT 骨参数自动提取工具 v1.0")
-        self.root.geometry("1000x760")
-        self.root.minsize(900, 650)
+        self.root.geometry("1050x780")
+        self.root.minsize(950, 700)
         
         style = ttk.Style()
         style.configure('Header.TLabel', font=('微软雅黑', 14, 'bold'))
@@ -37,6 +37,7 @@ class MicroCTApp:
         self.verbose_logging = tk.BooleanVar(value=True)
         self.is_running = False
         self.template_list = ['标准模板']
+        self._current_processor = None  # 保存处理器引用，用于导出错误日志
         
         self._build_ui()
         self._load_config()
@@ -102,6 +103,7 @@ class MicroCTApp:
         self.btn_stop.pack(side=tk.LEFT, padx=5)
         
         ttk.Button(btn_frame, text="📋 查看配置", command=self._view_config, width=12).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="📤 导出错误日志", command=self._export_errors, width=14).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_frame, text="❓ 帮助", command=self._show_help, width=10).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_frame, text="清空日志", command=self._clear_log, width=10).pack(side=tk.LEFT, padx=5)
         
@@ -162,7 +164,6 @@ class MicroCTApp:
         if not os.path.exists(self.config_path.get()):
             messagebox.showerror("错误", "配置文件不存在，请先创建配置文件")
             return
-        
         try:
             config = ConfigLoader(self.config_path.get())
             config.load()
@@ -178,7 +179,7 @@ class MicroCTApp:
     
     def _on_template_saved(self):
         self._load_config()
-        self._log(f"模板已更新", 'success')
+        self._log("模板已更新", 'success')
     
     def _browse_config(self):
         path = filedialog.askopenfilename(
@@ -254,6 +255,11 @@ MicroCT 骨参数自动提取工具 v1.0
 - 双击右侧参数 → 从模板中移除
 - 保存后立即生效
 
+【错误日志】
+处理完成后点击"导出错误日志"可导出所有错误和警告
+- 错误：提取失败、计算失败等
+- 警告：依赖缺失、单侧数据缺失等
+
 【配置文件说明】
 - ParamDef: 定义CSV中参数的列名映射
 - ExtractRules: 定义提取指令（参数+来源后缀）
@@ -275,6 +281,26 @@ MicroCT 骨参数自动提取工具 v1.0
     def _clear_log(self):
         self.log_text.delete(1.0, tk.END)
         self._log("日志已清空", 'info')
+    
+    def _export_errors(self):
+        """导出错误日志"""
+        if self._current_processor is None:
+            messagebox.showinfo("提示", "请先运行处理后再导出错误日志")
+            return
+        
+        errors = self._current_processor.get_errors()
+        warnings = self._current_processor.get_warnings()
+        if not errors and not warnings:
+            messagebox.showinfo("提示", "没有错误或警告可导出")
+            return
+        
+        path = filedialog.asksaveasfilename(
+            title="保存错误日志",
+            defaultextension=".xlsx",
+            filetypes=[("Excel文件", "*.xlsx"), ("所有文件", "*.*")]
+        )
+        if path:
+            self._current_processor.export_errors(path)
     
     def _start_processing(self):
         if self.is_running:
@@ -304,6 +330,7 @@ MicroCT 骨参数自动提取工具 v1.0
         self.progress_var.set(0)
         self.status_label.config(text="状态: 处理中...")
         self.stats_label.config(text="")
+        self._current_processor = None  # 重置处理器引用
         
         self.processing_thread = threading.Thread(target=self._process_worker, daemon=True)
         self.processing_thread.start()
@@ -328,6 +355,7 @@ MicroCT 骨参数自动提取工具 v1.0
                 progress_callback=self._update_progress,
                 verbose=verbose
             )
+            self._current_processor = processor  # 保存引用
             
             processor.scan_files()
             
@@ -345,13 +373,23 @@ MicroCT 骨参数自动提取工具 v1.0
             
             if success:
                 stats = processor.get_stats()
+                errors = processor.get_errors()
+                warnings = processor.get_warnings()
                 self._log(f"✅ 处理完成！", 'success')
                 self._log(f"   总样品: {stats['total']}", 'info')
                 self._log(f"   成功: {stats['success']}", 'success')
                 self._log(f"   跳过: {stats['skipped']}", 'warning')
-                self._log(f"   警告(仅单侧数据): {stats['warning']}", 'warning')
+                self._log(f"   警告: {stats['warning']}", 'warning')
+                self._log(f"   错误: {stats['error']}", 'error')
                 
-                self.stats_label.config(text=f"成功: {stats['success']}  |  跳过: {stats['skipped']}  |  警告: {stats['warning']}")
+                if errors:
+                    self._log(f"   ⚠ 共有 {len(errors)} 个错误，点击【导出错误日志】查看详情", 'error')
+                if warnings:
+                    self._log(f"   ⚠ 共有 {len(warnings)} 个警告，点击【导出错误日志】查看详情", 'warning')
+                
+                self.stats_label.config(
+                    text=f"成功: {stats['success']}  |  跳过: {stats['skipped']}  |  警告: {stats['warning']}  |  错误: {stats['error']}"
+                )
                 self.status_label.config(text="状态: 完成 ✅")
                 self.progress_var.set(100)
                 self.progress_label.config(text="处理完成！")
@@ -383,6 +421,8 @@ MicroCT 骨参数自动提取工具 v1.0
         if self.is_running:
             self._log("正在停止...", 'warning')
             self.status_label.config(text="状态: 停止中...")
+            if self._current_processor:
+                self._current_processor.stop()
 
 
 def main():
