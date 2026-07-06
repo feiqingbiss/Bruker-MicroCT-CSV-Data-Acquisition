@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-模板编辑器模块
-提供积木式拖拽排列参数的功能
+模板编辑器模块 - 积木式拖拽排列参数，自动添加单位（使用CSV列名）
 """
 
 import os
@@ -23,6 +22,7 @@ class TemplateEditor:
         
         self.selected_params = []
         self.available_params = []
+        self.all_available_params = []
         
         self.drag_start_index = None
         self.drag_data = None
@@ -35,8 +35,8 @@ class TemplateEditor:
     def _build_window(self):
         self.window = tk.Toplevel(self.parent)
         self.window.title(f"模板编辑器 - {self.template_name}")
-        self.window.geometry("900x650")
-        self.window.minsize(800, 550)
+        self.window.geometry("950x700")
+        self.window.minsize(850, 600)
         self.window.transient(self.parent)
         
         main_frame = ttk.Frame(self.window, padding="10")
@@ -88,7 +88,7 @@ class TemplateEditor:
         scrollbar_avail.config(command=self.avail_listbox.yview)
         self.avail_listbox.bind('<Double-Button-1>', self._add_selected)
         
-        self.avail_count_label = ttk.Label(left_frame, text="共 0 个参数")
+        self.avail_count_label = ttk.Label(left_frame, text="共 0 个可用参数 (已排除已选)")
         self.avail_count_label.pack(anchor=tk.W, pady=(3, 0))
         
         center_frame = ttk.Frame(body_frame, width=50)
@@ -136,12 +136,13 @@ class TemplateEditor:
         self.preview_label.pack(fill=tk.X, pady=3)
         
         self.window.update_idletasks()
-        x = self.parent.winfo_x() + (self.parent.winfo_width() - 900) // 2
-        y = self.parent.winfo_y() + (self.parent.winfo_height() - 650) // 2
+        x = self.parent.winfo_x() + (self.parent.winfo_width() - 950) // 2
+        y = self.parent.winfo_y() + (self.parent.winfo_height() - 700) // 2
         self.window.geometry(f"+{x}+{y}")
     
     def _load_available_params(self):
         self.available_params = []
+        self.all_available_params = []
         seen = set()
         
         for rule_id, rule in self.config.extract_rules.items():
@@ -152,7 +153,10 @@ class TemplateEditor:
                     label = f"{display_name} [{rule_id}]"
                 else:
                     label = rule_id
-                self.available_params.append((rule_id, label, rule.get('source', '')))
+                source = rule.get('source', '')
+                item = (rule_id, label, source)
+                self.available_params.append(item)
+                self.all_available_params.append(item)
                 seen.add(rule_id)
         
         meta_params = [
@@ -162,10 +166,13 @@ class TemplateEditor:
         ]
         for meta_id, label, source in meta_params:
             if meta_id not in seen:
-                self.available_params.append((meta_id, label, source))
+                item = (meta_id, label, source)
+                self.available_params.append(item)
+                self.all_available_params.append(item)
                 seen.add(meta_id)
         
         self.available_params.sort(key=lambda x: x[1])
+        self.all_available_params.sort(key=lambda x: x[1])
     
     def _load_current_template(self):
         self.selected_params = []
@@ -178,7 +185,7 @@ class TemplateEditor:
         self.avail_listbox.delete(0, tk.END)
         
         count = 0
-        for rule_id, label, source in self.available_params:
+        for rule_id, label, source in self.all_available_params:
             if rule_id in self.selected_params:
                 continue
             if keyword:
@@ -189,13 +196,13 @@ class TemplateEditor:
                 self.avail_listbox.insert(tk.END, label)
                 count += 1
         
-        self.avail_count_label.config(text=f"共 {count} 个参数 (已排除已选)")
+        self.avail_count_label.config(text=f"共 {count} 个可用参数 (已排除已选)")
     
     def _update_ui(self):
         self.selected_listbox.delete(0, tk.END)
         for rule_id in self.selected_params:
             label = rule_id
-            for rid, display, _ in self.available_params:
+            for rid, display, _ in self.all_available_params:
                 if rid == rule_id:
                     label = display
                     break
@@ -206,6 +213,8 @@ class TemplateEditor:
         
         preview_text = " → ".join([f"{i+1}.{p}" for i, p in enumerate(self.selected_params)])
         if preview_text:
+            if len(preview_text) > 200:
+                preview_text = preview_text[:200] + "..."
             self.preview_label.config(text=preview_text)
         else:
             self.preview_label.config(text="(请添加参数)")
@@ -219,7 +228,7 @@ class TemplateEditor:
         
         label = self.avail_listbox.get(selection[0])
         rule_id = None
-        for rid, display, _ in self.available_params:
+        for rid, display, _ in self.all_available_params:
             if display == label:
                 rule_id = rid
                 break
@@ -294,19 +303,43 @@ class TemplateEditor:
             })
         return rows
     
+    # ★★★★★ 关键修改：使用 CSV列名（缩写）+ 单位 ★★★★★
     def _get_column_display_name(self, rule_id):
-        for rid, display, _ in self.available_params:
-            if rid == rule_id:
-                if ' [' in display:
-                    return display.split(' [')[0]
-                return display
-        
+        # 元数据
         meta_names = {
             'DATE_META': '日期',
             'SAMPLE_ID_META': '样品ID',
             'FEMUR_META': '股骨'
         }
-        return meta_names.get(rule_id, rule_id)
+        if rule_id in meta_names:
+            return meta_names[rule_id]
+
+        # 从参数定义中获取 CSV列名 和 单位
+        rule = self.config.get_extract_rule(rule_id)
+        if rule:
+            param_id = rule.get('param_id', '')
+            param_def = self.config.get_param_def(param_id)
+            if param_def:
+                # ★ 优先使用 CSV列名（缩写）
+                col_name = param_def.get('csv_column', '')
+                unit = param_def.get('unit', '')
+                if col_name:
+                    if unit:
+                        return f"{col_name} ({unit})"
+                    return col_name
+                # 如果 csv_column 为空，回退到完整名称
+                full_name = param_def.get('full_name', '')
+                if unit:
+                    return f"{full_name} ({unit})"
+                return full_name
+
+        # 回退：从显示名中提取
+        for rid, display, _ in self.all_available_params:
+            if rid == rule_id:
+                if ' [' in display:
+                    return display.split(' [')[0]
+                return display
+        return rule_id
     
     def _save_template(self):
         if not self.selected_params:
