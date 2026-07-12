@@ -85,7 +85,6 @@ class SampleProcessor:
             sections = parser.get_section_info()
 
             if self.is_single_mode:
-                # ★ 使用完整相对路径作为样品ID，避免同名文件冲突
                 rel_path = os.path.relpath(file_path, self.root_dir)
                 sample_id = rel_path.replace(os.sep, '_').replace('.csv', '')
                 if len(sample_id) > 100:
@@ -508,32 +507,40 @@ class SampleProcessor:
                     groups[base_sample] = []
                 groups[base_sample].append(row)
 
+            # ★ 计算所有组中的最大结果数量
+            max_results = 0
+            for rows in groups.values():
+                if len(rows) > max_results:
+                    max_results = len(rows)
+
             # 构建扩展后的行数据
             expanded_rows = []
             for base_sample, rows in groups.items():
                 date_val = rows[0][0] if rows[0] else None
                 new_row = [date_val, base_sample]
 
-                for idx, row in enumerate(rows):
-                    param_values = row[base_cols_count:] if len(row) > base_cols_count else []
-                    while len(param_values) < len(param_cols):
-                        param_values.append(None)
-                    new_row.extend(param_values)
+                for idx in range(max_results):
+                    if idx < len(rows):
+                        row = rows[idx]
+                        param_values = row[base_cols_count:] if len(row) > base_cols_count else []
+                        while len(param_values) < len(param_cols):
+                            param_values.append(None)
+                        new_row.extend(param_values)
+                    else:
+                        new_row.extend([None] * len(param_cols))
 
-                    if idx < len(rows) - 1:
+                    if idx < max_results - 1:
                         new_row.extend([None, None])
 
                 expanded_rows.append(new_row)
 
             # 构建扩展后的列名
-            first_group_rows = groups[next(iter(groups))] if groups else []
-            num_results = len(first_group_rows)
             new_col_names = ['日期', '样品ID']
-            for idx in range(num_results):
-                suffix = f"_结果{idx+1}" if num_results > 1 else ""
+            for idx in range(max_results):
+                suffix = f"_结果{idx+1}" if max_results > 1 else ""
                 for param in param_cols:
                     new_col_names.append(f"{param}{suffix}")
-                if idx < num_results - 1:
+                if idx < max_results - 1:
                     new_col_names.append("")
                     new_col_names.append("")
 
