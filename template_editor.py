@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 模板编辑器模块 - 积木式拖拽排列参数，自动添加单位（使用CSV列名）
+特殊处理 DA 和 DA(math)
 """
 
 import os
@@ -303,7 +304,7 @@ class TemplateEditor:
             })
         return rows
     
-    # ★★★★★ 关键修改：使用 CSV列名（缩写）+ 单位 ★★★★★
+    # ★★★★★ 关键修改：特殊处理 DA 和 DA_ratio ★★★★★
     def _get_column_display_name(self, rule_id):
         # 元数据
         meta_names = {
@@ -314,20 +315,24 @@ class TemplateEditor:
         if rule_id in meta_names:
             return meta_names[rule_id]
 
+        # ★ 特殊处理 DA 和 DA_ratio
+        if 'DA_ratio' in rule_id:
+            return 'DA(math)'
+        if 'DA' in rule_id and 'DA_ratio' not in rule_id:
+            return 'DA'
+
         # 从参数定义中获取 CSV列名 和 单位
         rule = self.config.get_extract_rule(rule_id)
         if rule:
             param_id = rule.get('param_id', '')
             param_def = self.config.get_param_def(param_id)
             if param_def:
-                # ★ 优先使用 CSV列名（缩写）
                 col_name = param_def.get('csv_column', '')
                 unit = param_def.get('unit', '')
                 if col_name:
                     if unit:
                         return f"{col_name} ({unit})"
                     return col_name
-                # 如果 csv_column 为空，回退到完整名称
                 full_name = param_def.get('full_name', '')
                 if unit:
                     return f"{full_name} ({unit})"

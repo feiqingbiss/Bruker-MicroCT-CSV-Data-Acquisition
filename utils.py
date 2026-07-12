@@ -26,19 +26,37 @@ def extract_sample_id(file_path, method='parent_folder_file_prefix'):
     path_obj = Path(file_path)
     
     if method == 'parent_folder_file_prefix':
-        parent_name = path_obj.parent.parent.name
+        # ★ 安全获取父文件夹名
+        try:
+            parent_name = path_obj.parent.parent.name
+        except IndexError:
+            # 如果层级不足，尝试获取父文件夹名
+            parent_name = path_obj.parent.name if path_obj.parent else ''
         file_prefix = path_obj.stem.split('_')[0]
         if parent_name and file_prefix:
             return f"{parent_name}_{file_prefix}"
+        elif file_prefix:
+            return file_prefix
+        else:
+            return path_obj.stem
     
     elif method == 'parent_folder':
-        return path_obj.parent.parent.name
+        try:
+            return path_obj.parent.parent.name
+        except IndexError:
+            return path_obj.parent.name if path_obj.parent else ''
     
     elif method == 'file_prefix':
         return path_obj.stem.split('_')[0]
     
     elif method == 'grandparent_folder':
-        return path_obj.parent.parent.parent.name
+        try:
+            return path_obj.parent.parent.parent.name
+        except IndexError:
+            try:
+                return path_obj.parent.parent.name
+            except IndexError:
+                return path_obj.parent.name if path_obj.parent else ''
     
     return None
 

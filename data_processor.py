@@ -85,10 +85,11 @@ class SampleProcessor:
             sections = parser.get_section_info()
 
             if self.is_single_mode:
+                # ★ 使用完整相对路径作为样品ID，避免同名文件冲突
                 rel_path = os.path.relpath(file_path, self.root_dir)
                 sample_id = rel_path.replace(os.sep, '_').replace('.csv', '')
-                if len(sample_id) > 80:
-                    sample_id = sample_id[:80]
+                if len(sample_id) > 100:
+                    sample_id = sample_id[:100]
             else:
                 sample_id = extract_sample_id(file_path, id_method)
                 if not sample_id:

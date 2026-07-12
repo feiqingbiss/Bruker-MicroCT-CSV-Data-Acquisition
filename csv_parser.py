@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 CSV解析模块 - 支持多种直方图单位，每个3D结果独立绑定各单位段
+增强2D数据行检测（支持无扩展名文件名）
 """
 
 import os
@@ -77,7 +78,17 @@ class CSVParser:
                             parts = lk.split(',')
                             if len(parts) >= 2:
                                 first = parts[0].strip()
+                                # 检查是否以图片扩展名结尾
                                 if re.search(r'\.(bmp|tif|tiff|jpg|jpeg|png)$', first, re.I):
+                                    try:
+                                        if parts[1].strip():
+                                            float(parts[1].strip())
+                                        data_idx = k
+                                        break
+                                    except:
+                                        pass
+                                # ★ 无扩展名数据行检测
+                                elif re.match(r'^[\w\-]+$', first) and any(c.isdigit() for c in first):
                                     try:
                                         if parts[1].strip():
                                             float(parts[1].strip())

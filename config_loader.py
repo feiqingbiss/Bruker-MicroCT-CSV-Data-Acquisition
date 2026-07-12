@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 配置加载模块 - 包含全部2D/3D参数以及多种直方图参数（BMD/Index/HU/Attenuation）
+增强异常处理，默认模板不包含 DA/DA_ratio
 """
 
 import os
@@ -27,69 +28,93 @@ class ConfigLoader:
         try:
             xl = pd.ExcelFile(self.config_path)
             
-            if 'ParamDef' in xl.sheet_names:
-                df = pd.read_excel(self.config_path, sheet_name='ParamDef')
-                self.param_defs = {}
-                for _, row in df.iterrows():
-                    pid = str(row['参数ID']).strip()
-                    self.param_defs[pid] = {
-                        'full_name': str(row.get('完整名称', '')).strip(),
-                        'csv_column': str(row.get('CSV列名', '')).strip(),
-                        'alias': [a.strip() for a in str(row.get('别名', '')).split(',') if a.strip()],
-                        'unit': str(row.get('单位', '')).strip(),
-                        'data_type': str(row.get('数据类型', 'float')).strip(),
-                        'source': str(row.get('来源段', '')).strip(),
-                    }
+            # ---- ParamDef ----
+            try:
+                if 'ParamDef' in xl.sheet_names:
+                    df = pd.read_excel(self.config_path, sheet_name='ParamDef')
+                    self.param_defs = {}
+                    for _, row in df.iterrows():
+                        pid = str(row['参数ID']).strip()
+                        self.param_defs[pid] = {
+                            'full_name': str(row.get('完整名称', '')).strip(),
+                            'csv_column': str(row.get('CSV列名', '')).strip(),
+                            'alias': [a.strip() for a in str(row.get('别名', '')).split(',') if a.strip()],
+                            'unit': str(row.get('单位', '')).strip(),
+                            'data_type': str(row.get('数据类型', 'float')).strip(),
+                            'source': str(row.get('来源段', '')).strip(),
+                        }
+            except Exception as e:
+                raise Exception(f"加载 ParamDef 工作表失败: {e}")
             
-            if 'ExtractRules' in xl.sheet_names:
-                df = pd.read_excel(self.config_path, sheet_name='ExtractRules')
-                self.extract_rules = {}
-                for _, row in df.iterrows():
-                    rid = str(row['指令ID']).strip()
-                    if not rid:
-                        continue
-                    self.extract_rules[rid] = {
-                        'param_id': str(row['参数ID']).strip(),
-                        'source': str(row['来源段']).strip(),
-                        'unit': str(row.get('单位', '')).strip(),
-                        'data_type': str(row.get('数据类型', 'float')).strip(),
-                        'extract_type': str(row.get('提取方式', 'direct')).strip(),
-                        'offset': int(row.get('偏移量', 0)) if pd.notna(row.get('偏移量', 0)) else 0,
-                    }
+            # ---- ExtractRules ----
+            try:
+                if 'ExtractRules' in xl.sheet_names:
+                    df = pd.read_excel(self.config_path, sheet_name='ExtractRules')
+                    self.extract_rules = {}
+                    for _, row in df.iterrows():
+                        rid = str(row['指令ID']).strip()
+                        if not rid:
+                            continue
+                        self.extract_rules[rid] = {
+                            'param_id': str(row['参数ID']).strip(),
+                            'source': str(row['来源段']).strip(),
+                            'unit': str(row.get('单位', '')).strip(),
+                            'data_type': str(row.get('数据类型', 'float')).strip(),
+                            'extract_type': str(row.get('提取方式', 'direct')).strip(),
+                            'offset': int(row.get('偏移量', 0)) if pd.notna(row.get('偏移量', 0)) else 0,
+                        }
+            except Exception as e:
+                raise Exception(f"加载 ExtractRules 工作表失败: {e}")
             
-            if 'CalcParams' in xl.sheet_names:
-                df = pd.read_excel(self.config_path, sheet_name='CalcParams')
-                for _, row in df.iterrows():
-                    cid = str(row['参数ID']).strip()
-                    self.calc_params[cid] = {
-                        'display_name': str(row.get('显示名称', '')).strip(),
-                        'formula': str(row.get('计算公式', '')).strip(),
-                        'unit': str(row.get('单位', '')).strip(),
-                        'data_type': str(row.get('数据类型', 'float')).strip(),
-                    }
+            # ---- CalcParams ----
+            try:
+                if 'CalcParams' in xl.sheet_names:
+                    df = pd.read_excel(self.config_path, sheet_name='CalcParams')
+                    for _, row in df.iterrows():
+                        cid = str(row['参数ID']).strip()
+                        self.calc_params[cid] = {
+                            'display_name': str(row.get('显示名称', '')).strip(),
+                            'formula': str(row.get('计算公式', '')).strip(),
+                            'unit': str(row.get('单位', '')).strip(),
+                            'data_type': str(row.get('数据类型', 'float')).strip(),
+                        }
+            except Exception as e:
+                raise Exception(f"加载 CalcParams 工作表失败: {e}")
             
-            if 'TemplateDef' in xl.sheet_names:
-                df = pd.read_excel(self.config_path, sheet_name='TemplateDef')
-                df = df.sort_values(['模板名称', '顺序'])
-                self.template_names = df['模板名称'].unique().tolist()
-                self.template_def = []
-                for _, row in df.iterrows():
-                    self.template_def.append({
-                        'column_name': str(row['列名']).strip(),
-                        'extract_id': str(row['提取指令']).strip(),
-                        'order': int(row['顺序']),
-                        'template': str(row.get('模板名称', '默认')).strip(),
-                    })
+            # ---- TemplateDef ----
+            try:
+                if 'TemplateDef' in xl.sheet_names:
+                    df = pd.read_excel(self.config_path, sheet_name='TemplateDef')
+                    df = df.sort_values(['模板名称', '顺序'])
+                    self.template_names = df['模板名称'].unique().tolist()
+                    self.template_def = []
+                    for _, row in df.iterrows():
+                        self.template_def.append({
+                            'column_name': str(row['列名']).strip(),
+                            'extract_id': str(row['提取指令']).strip(),
+                            'order': int(row['顺序']),
+                            'template': str(row.get('模板名称', '默认')).strip(),
+                        })
+            except Exception as e:
+                raise Exception(f"加载 TemplateDef 工作表失败: {e}")
             
-            if 'PathRules' in xl.sheet_names:
-                df = pd.read_excel(self.config_path, sheet_name='PathRules')
-                for _, row in df.iterrows():
-                    self.path_rules[str(row['配置项']).strip()] = str(row['值']).strip()
+            # ---- PathRules ----
+            try:
+                if 'PathRules' in xl.sheet_names:
+                    df = pd.read_excel(self.config_path, sheet_name='PathRules')
+                    for _, row in df.iterrows():
+                        self.path_rules[str(row['配置项']).strip()] = str(row['值']).strip()
+            except Exception as e:
+                raise Exception(f"加载 PathRules 工作表失败: {e}")
             
-            if 'GrayUnitConfig' in xl.sheet_names:
-                df = pd.read_excel(self.config_path, sheet_name='GrayUnitConfig')
-                for _, row in df.iterrows():
-                    self.gray_unit_config[str(row['配置项']).strip()] = str(row['值']).strip()
+            # ---- GrayUnitConfig ----
+            try:
+                if 'GrayUnitConfig' in xl.sheet_names:
+                    df = pd.read_excel(self.config_path, sheet_name='GrayUnitConfig')
+                    for _, row in df.iterrows():
+                        self.gray_unit_config[str(row['配置项']).strip()] = str(row['值']).strip()
+            except Exception as e:
+                raise Exception(f"加载 GrayUnitConfig 工作表失败: {e}")
             
             self._loaded = True
             return True
@@ -158,7 +183,7 @@ def generate_default_config(path):
         ('iPm', 'Intersection perimeter', 'i.Pm', 'um'),
     ]
 
-    # ---- 完整的3D参数（含 DA/DA_ratio） ----
+    # ---- 完整的3D参数（含 DA/DA_ratio，但默认模板不显示） ----
     params_3d = [
         ('TV', 'Tissue volume', 'TV', 'um^3'),
         ('BV', 'Bone volume', 'BV', 'um^3'),
@@ -177,7 +202,7 @@ def generate_default_config(path):
         ('CrdZ3D', 'Centroid (z)', 'Crd.Z', 'um'),
         ('SMI', 'Structure model index', 'SMI', ''),
         ('DA', 'Degree of anisotropy', 'DA', ''),
-        ('DA_ratio', 'Degree of anisotropy (ratio)', 'DA', ''),  # csv_column 设为 DA
+        ('DA_ratio', 'Degree of anisotropy (ratio)', 'DA', ''),
         ('FD3D', 'Fractal dimension', 'FD', ''),
         ('ObjN3D', 'Number of objects', 'Obj.N', ''),
         ('PoNcl3D', 'Number of closed pores', 'Po.N(cl)', ''),
@@ -322,7 +347,7 @@ def generate_default_config(path):
         ])
         calc_params.to_excel(writer, sheet_name='CalcParams', index=False)
 
-        # ---- TemplateDef（标准模板 + 单品模板） ----
+        # ---- TemplateDef（不包含 DA/DA_ratio） ----
         template_def_rows = [
             # 模板1：标准模板（长骨专用，松质+皮质）
             {'模板名称': '标准模板（长骨专用）区分松质骨皮质骨参数', '列名': '日期', '提取指令': 'DATE_META', '顺序': 1},
