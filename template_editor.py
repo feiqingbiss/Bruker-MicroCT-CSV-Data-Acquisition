@@ -146,6 +146,7 @@ class TemplateEditor:
         self.all_available_params = []
         seen = set()
         
+        # 1. ExtractRules
         for rule_id, rule in self.config.extract_rules.items():
             if rule_id not in seen:
                 param_def = self.config.get_param_def(rule.get('param_id', ''))
@@ -160,6 +161,17 @@ class TemplateEditor:
                 self.all_available_params.append(item)
                 seen.add(rule_id)
         
+        # 2. CalcParams（计算参数）
+        for calc_id, calc_def in self.config.calc_params.items():
+            if calc_id not in seen:
+                display_name = calc_def.get('display_name', calc_id)
+                label = f"{display_name} [计算参数]"
+                item = (calc_id, label, 'Calc')
+                self.available_params.append(item)
+                self.all_available_params.append(item)
+                seen.add(calc_id)
+        
+        # 3. 元数据
         meta_params = [
             ('DATE_META', '日期 [DATE_META]', 'META'),
             ('SAMPLE_ID_META', '样品ID [SAMPLE_ID_META]', 'META'),

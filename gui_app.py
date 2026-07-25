@@ -20,7 +20,7 @@ from template_editor import TemplateEditor
 class MicroCTApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("MicroCT 骨参数自动提取工具 v2.")
+        self.root.title("MicroCT 骨参数自动提取工具 v2.7")
         self.root.geometry("1150x820")
         self.root.minsize(1050, 750)
 
@@ -34,7 +34,11 @@ class MicroCTApp:
         self.open_folder = tk.BooleanVar(value=True)
         self.verbose_logging = tk.BooleanVar(value=True)
         self.is_running = False
-        self.template_list = ['标准模板（长骨专用）区分松质骨皮质骨参数', '通用模板（直接提取参数）']
+        self.template_list = [
+            '标准模板（长骨专用）区分松质骨皮质骨参数',
+            '通用模板（同一样品CSV内多ROI分析结果）',
+            '通用模板（同一样品不同VOI数据结果）'
+        ]
         self._current_processor = None
 
         self._build_ui()
@@ -61,7 +65,7 @@ class MicroCTApp:
                                 font=('微软雅黑', 22, 'bold'), foreground='#1a56db')
         title_label.pack(side=tk.LEFT)
         
-        version_label = ttk.Label(header_frame, text="v2.6", 
+        version_label = ttk.Label(header_frame, text="v2.7", 
                                    font=('微软雅黑', 12), foreground='#94a3b8')
         version_label.pack(side=tk.LEFT, padx=(10, 0))
         
@@ -213,7 +217,7 @@ class MicroCTApp:
         self.log_text.tag_config('error', foreground='#dc2626')
         self.log_text.tag_config('detail', foreground='#94a3b8')
 
-        self._log("🚀 欢迎使用 MicroCT 骨参数自动提取工具 v2.6", 'info')
+        self._log("🚀 欢迎使用 MicroCT 骨参数自动提取工具 v2.7", 'info')
         self._log("💡 请选择输入目录并点击「开始处理」", 'info')
 
     def _on_template_selected(self, value):
@@ -248,7 +252,11 @@ class MicroCTApp:
         try:
             config = ConfigLoader(self.config_path.get())
             config.load()
-            self.template_list = config.template_names if config.template_names else ['标准模板（长骨专用）区分松质骨皮质骨参数', '通用模板（直接提取参数）']
+            self.template_list = config.template_names if config.template_names else [
+                '标准模板（长骨专用）区分松质骨皮质骨参数',
+                '通用模板（同一样品CSV内多ROI分析结果）',
+                '通用模板（同一样品不同VOI数据结果）'
+            ]
             
             menu = self.template_menu['menu']
             menu.delete(0, 'end')
@@ -347,20 +355,21 @@ class MicroCTApp:
 
     def _show_help(self):
         help_text = """
-🦴 MicroCT 骨参数自动提取工具 v2.6
+🦴 MicroCT 骨参数自动提取工具 v2.7
 
 【📖 使用说明】
 1. 选择或创建配置文件（.xlsx格式），点击"创建默认"生成
 2. 选择模板方案：
    • 标准模板（长骨专用）— 松质+皮质配对
-   • 通用模板（直接提取参数）— 单文件独立提取，多个3D结果水平展开
+   • 通用模板（同一样品CSV内多ROI分析结果）— 单文件独立提取，多个3D结果水平展开
+   • 通用模板（同一样品不同VOI数据结果）— 同一CSV在不同VOI文件夹中合并为一行
 3. 选择包含CSV文件的顶层输入目录
 4. 指定输出Excel文件路径（或勾选自动生成）
 5. 点击"开始处理"
 
 【✏️ 模板编辑器】
 点击"编辑模板"打开积木式编辑器：
-- 左侧：所有可用参数，支持搜索过滤
+- 左侧：所有可用参数（包括计算参数），支持搜索过滤
 - 双击左侧参数 → 添加到右侧
 - 右侧：已选参数，拖拽调整顺序
 - 双击右侧参数 → 从模板中移除
@@ -371,10 +380,10 @@ class MicroCTApp:
 【📁 文件支持】
 支持 .ctan.csv, .batman.csv 等任意 .csv 结果文件
 
-【✨ v2.5 新特性】
-- 支持 Index / HU / Attenuation 直方图参数
-- 通用模板自动检测多个3D结果，水平展开
-- 每个3D结果独立绑定直方图和2D分析，不共享
+【✨ v2.7 新特性】
+- 模板编辑器支持加载计算参数
+- 灵活的样品ID提取规则（可在PathRules中自定义）
+- 新增“同一样品不同VOI数据结果”模板，横向合并多个VOI
 """
         messagebox.showinfo("帮助", help_text)
 

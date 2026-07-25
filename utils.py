@@ -23,42 +23,69 @@ def format_date(date_str):
 
 
 def extract_sample_id(file_path, method='parent_folder_file_prefix'):
+    """
+    根据 method 提取样品ID。
+    method 可以是：
+      - 'parent_folder_file_prefix': 父文件夹名 + "_" + 文件名前缀
+      - 'parent_folder': 父文件夹名
+      - 'file_prefix': 文件名前缀
+      - 'grandparent_folder': 祖父文件夹名
+      - 'full_path': 完整路径（替换分隔符为下划线）
+      - 自定义模板字符串，如 '{grandparent}_{parent}_{file_prefix}'
+    """
     path_obj = Path(file_path)
-    
+    stem = path_obj.stem
+    parts = []
+    p = path_obj
+    while p.parent != p:
+        parts.append(p.name)
+        p = p.parent
+    parts = parts[::-1]
+    grandparent = parts[-3] if len(parts) >= 3 else ''
+    parent = parts[-2] if len(parts) >= 2 else ''
+    file_prefix = stem.split('_')[0] if '_' in stem else stem
+
+    if method.startswith('{'):
+        result = method
+        result = result.replace('{grandparent}', grandparent)
+        result = result.replace('{parent}', parent)
+        result = result.replace('{file_prefix}', file_prefix)
+        result = result.replace('{stem}', stem)
+        return result
+
     if method == 'parent_folder_file_prefix':
-        # ★ 安全获取父文件夹名
-        try:
-            parent_name = path_obj.parent.parent.name
-        except IndexError:
-            # 如果层级不足，尝试获取父文件夹名
-            parent_name = path_obj.parent.name if path_obj.parent else ''
-        file_prefix = path_obj.stem.split('_')[0]
-        if parent_name and file_prefix:
-            return f"{parent_name}_{file_prefix}"
+        if parent and file_prefix:
+            return f"{parent}_{file_prefix}"
         elif file_prefix:
             return file_prefix
         else:
-            return path_obj.stem
-    
+            return stem
     elif method == 'parent_folder':
-        try:
-            return path_obj.parent.parent.name
-        except IndexError:
-            return path_obj.parent.name if path_obj.parent else ''
-    
+        return parent
     elif method == 'file_prefix':
-        return path_obj.stem.split('_')[0]
-    
+        return file_prefix
     elif method == 'grandparent_folder':
-        try:
-            return path_obj.parent.parent.parent.name
-        except IndexError:
-            try:
-                return path_obj.parent.parent.name
-            except IndexError:
-                return path_obj.parent.name if path_obj.parent else ''
-    
+        return grandparent
+    elif method == 'full_path':
+        return path_obj.as_posix().replace('/', '_')
     return None
+
+
+def extract_voi_index(file_path):
+    """
+    从路径中提取 VOI 序号和是否匹配VOI模式。
+    返回 (is_voi_pattern, voi_index)
+    is_voi_pattern: 是否匹配 "VOI" 或 "VOI(数字)" 模式
+    voi_index: 数字（不匹配时返回 0）
+    """
+    # 匹配 VOI(数字) 或 VOI
+    match = re.search(r'VOI(?:\((\d+)\))?', file_path, re.IGNORECASE)
+    if match:
+        if match.group(1):
+            return (True, int(match.group(1)))
+        else:
+            return (True, 0)
+    return (False, 0)
 
 
 def is_numeric(value):
