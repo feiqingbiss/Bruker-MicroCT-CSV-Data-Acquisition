@@ -20,7 +20,7 @@ from template_editor import TemplateEditor
 class MicroCTApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("MicroCT 骨参数自动提取工具 v2.7")
+        self.root.title("MicroCT 骨参数自动提取工具 v2.8")
         self.root.geometry("1150x820")
         self.root.minsize(1050, 750)
 
@@ -65,7 +65,7 @@ class MicroCTApp:
                                 font=('微软雅黑', 22, 'bold'), foreground='#1a56db')
         title_label.pack(side=tk.LEFT)
         
-        version_label = ttk.Label(header_frame, text="v2.7", 
+        version_label = ttk.Label(header_frame, text="v2.8", 
                                    font=('微软雅黑', 12), foreground='#94a3b8')
         version_label.pack(side=tk.LEFT, padx=(10, 0))
         
@@ -217,7 +217,7 @@ class MicroCTApp:
         self.log_text.tag_config('error', foreground='#dc2626')
         self.log_text.tag_config('detail', foreground='#94a3b8')
 
-        self._log("🚀 欢迎使用 MicroCT 骨参数自动提取工具 v2.7", 'info')
+        self._log("🚀 欢迎使用 MicroCT 骨参数自动提取工具 v2.8", 'info')
         self._log("💡 请选择输入目录并点击「开始处理」", 'info')
 
     def _on_template_selected(self, value):
@@ -355,7 +355,7 @@ class MicroCTApp:
 
     def _show_help(self):
         help_text = """
-🦴 MicroCT 骨参数自动提取工具 v2.7
+🦴 MicroCT 骨参数自动提取工具 v2.8
 
 【📖 使用说明】
 1. 选择或创建配置文件（.xlsx格式），点击"创建默认"生成
@@ -380,7 +380,7 @@ class MicroCTApp:
 【📁 文件支持】
 支持 .ctan.csv, .batman.csv 等任意 .csv 结果文件
 
-【✨ v2.7 新特性】
+【✨ v2.8 新特性】
 - 模板编辑器支持加载计算参数
 - 灵活的样品ID提取规则（可在PathRules中自定义）
 - 新增“同一样品不同VOI数据结果”模板，横向合并多个VOI
