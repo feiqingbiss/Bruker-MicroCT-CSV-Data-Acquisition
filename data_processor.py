@@ -1,9 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-数据处理核心模块 - 支持三种模式
-1. 标准模板（长骨专用）区分松质骨皮质骨参数：松质+皮质配对
-2. 通用模板（同一样品CSV内多ROI分析结果）：每个CSV独立提取，多个3D结果横向展开（列名带 _R1, _R2）
-3. 通用模板（同一样品不同VOI数据结果）：同一文件名在不同文件夹中，横向合并，每组（文件夹）之间插入2列空列
+数据处理核心模块
 """
 
 import os
@@ -20,7 +17,6 @@ from utils import extract_sample_id, extract_voi_index, safe_float
 
 
 def natural_key(text):
-    """将字符串转换为自然排序键，例如 '3-12' > '3-2' 等"""
     return [int(c) if c.isdigit() else c.lower() for c in re.split(r'(\d+)', text)]
 
 
@@ -34,8 +30,8 @@ class SampleProcessor:
         self.progress_callback = progress_callback
         self.verbose = verbose
 
-        self.is_single_mode = ('同一样品CSV内多ROI分析结果' in template_name)
-        self.is_voi_mode = ('同一样品不同VOI数据结果' in template_name)
+        self.is_single_mode = ('一个样品CSV内多个ROI分析结果' in template_name)
+        self.is_voi_mode = ('一组样品不同部位、重复同名CSV' in template_name)
 
         self.samples = defaultdict(list)
         self.results = []
@@ -46,26 +42,18 @@ class SampleProcessor:
 
     def _log(self, msg, tag='info'):
         if self.log_callback:
-            self.log_callback(msg, tag) if tag else self.log_callback(msg)
+            self.log_callback(msg, tag)
 
     def _add_error(self, sample_id, file_path, param_id, message):
-        self.errors.append({
-            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            'sample_id': sample_id,
-            'file_path': file_path,
-            'param_id': param_id,
-            'message': message
-        })
+        self.errors.append({'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                            'sample_id': sample_id, 'file_path': file_path,
+                            'param_id': param_id, 'message': message})
         self.stats['error'] += 1
 
     def _add_warning(self, sample_id, file_path, message, param_id=''):
-        self.warnings.append({
-            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            'sample_id': sample_id,
-            'file_path': file_path,
-            'param_id': param_id,
-            'message': message
-        })
+        self.warnings.append({'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                              'sample_id': sample_id, 'file_path': file_path,
+                              'param_id': param_id, 'message': message})
         self.stats['warning'] += 1
 
     def _progress(self, current, total, msg=''):
@@ -93,16 +81,11 @@ class SampleProcessor:
             valid_count += 1
             sections = parser.get_section_info()
 
-            # ---- 样品ID提取 ----
             if self.is_voi_mode:
                 stem = os.path.splitext(os.path.basename(file_path))[0]
-                if '_' in stem:
-                    sample_id = stem.split('_')[0]
-                else:
-                    sample_id = stem
-                if not sample_id:
-                    sample_id = stem
+                sample_id = stem.split('_')[0] if '_' in stem else stem
                 folder_name = os.path.basename(os.path.dirname(file_path))
+                parent_folder_name = os.path.basename(os.path.dirname(os.path.dirname(file_path)))
                 is_voi_pattern, voi_idx = extract_voi_index(file_path)
             else:
                 sample_id = extract_sample_id(file_path, id_rule)
@@ -111,10 +94,10 @@ class SampleProcessor:
                     self._add_warning('unknown', file_path, f"无法提取样品ID: {file_path}")
                     continue
                 folder_name = ''
+                parent_folder_name = ''
                 is_voi_pattern = False
                 voi_idx = 0
 
-            # ---- 文件类型 ----
             if self.is_single_mode:
                 file_type = 'single'
             elif self.is_voi_mode:
@@ -128,13 +111,13 @@ class SampleProcessor:
                     self._log(f"  检测到 {_3d_count} 个3D分析结果，将分别提取", 'detail')
 
             self._log(f"  识别: {os.path.basename(file_path)} → {file_type}", 'detail')
-
             self.samples[sample_id].append({
                 'path': file_path,
                 'type': file_type,
                 'sections': sections,
                 'parser': parser,
                 'folder_name': folder_name,
+                'parent_folder_name': parent_folder_name,
                 'voi_idx': voi_idx,
                 'is_voi_pattern': is_voi_pattern,
             })
@@ -161,6 +144,121 @@ class SampleProcessor:
         self._log(f"处理完成: 成功 {self.stats['success']}, 跳过 {self.stats['skipped']}, "
                   f"警告 {self.stats['warning']}, 错误 {self.stats['error']}")
 
+    # ---------- 统一提取核心 ----------
+    def _extract_from_parsers(self, parsers, sample_id, columns, mode='single', result_index=0):
+        extracted = {}
+        for col_def in columns:
+            extract_id = col_def['extract_id']
+            if extract_id in ['DATE_META', 'SAMPLE_ID_META', 'FOLDER_NAME']:
+                continue
+            if extract_id in self.config.calc_params:
+                continue
+
+            rule = self.config.get_extract_rule(extract_id)
+            if not rule:
+                self._add_warning(sample_id, '', f"未知提取指令: {extract_id}", extract_id)
+                continue
+
+            source = rule['source']
+            param_id = rule['param_id']
+            value = None
+
+            if mode == 'single':
+                parser = parsers[0] if parsers else None
+                if parser:
+                    if source == '3D':
+                        value = parser.extract_value('3D', param_id, result_index)
+                    elif source == '2D':
+                        value = parser.extract_value('2D', param_id, result_index)
+                    elif source == 'Histogram':
+                        value = parser.extract_value('Histogram', param_id, result_index)
+                        if value is None:
+                            self._add_warning(sample_id, parser.file_path, f"直方图提取失败: {extract_id}", extract_id)
+            elif mode == 'pair':
+                if '_trab_' in extract_id:
+                    parser = parsers.get('trab')
+                elif '_cort_' in extract_id:
+                    parser = parsers.get('cort')
+                else:
+                    parser = None
+                if parser:
+                    if source == '3D':
+                        value = parser.extract_value('3D', param_id, 0)
+                    elif source == '2D':
+                        value = parser.extract_value('2D', param_id, 0)
+                    elif source == 'Histogram':
+                        value = parser.extract_value('Histogram', param_id, 0)
+                        if value is None:
+                            self._add_warning(sample_id, parser.file_path, f"直方图提取失败: {extract_id}", extract_id)
+                else:
+                    value = None
+            elif mode == 'voi':
+                parser = parsers[0] if parsers else None
+                if parser:
+                    if source == '3D':
+                        value = parser.extract_value('3D', param_id, 0)
+                    elif source == '2D':
+                        value = parser.extract_value('2D', param_id, 0)
+                    elif source == 'Histogram':
+                        value = parser.extract_value('Histogram', param_id, 0)
+
+            extracted[extract_id] = value
+            if self.verbose and value is not None:
+                self._log(f"      {extract_id} = {value}", 'detail')
+            if value is None and source != 'Histogram':
+                file_path = parser.file_path if parser else ''
+                self._add_error(sample_id, file_path, extract_id, f"提取失败: {extract_id} 返回 None")
+
+        # 计算参数
+        for col_def in columns:
+            extract_id = col_def['extract_id']
+            if extract_id in self.config.calc_params:
+                # 获取有效的parser用于错误日志
+                valid_parser = None
+                if mode == 'single' and parsers:
+                    valid_parser = parsers[0]
+                elif mode == 'pair':
+                    valid_parser = parsers.get('trab') or parsers.get('cort')
+                elif mode == 'voi' and parsers:
+                    valid_parser = parsers[0]
+                calc_value = self._calc_param(extract_id, extracted, sample_id, valid_parser)
+                extracted[extract_id] = calc_value
+                if self.verbose and calc_value is not None:
+                    self._log(f"      [计算] {extract_id} = {calc_value}", 'detail')
+
+        return extracted
+
+    def _calc_param(self, calc_id, extracted_values, sample_id, parser):
+        calc_def = self.config.get_calc_param(calc_id)
+        if not calc_def:
+            self._add_warning(sample_id, parser.file_path if parser else '', f"计算参数定义缺失: {calc_id}", calc_id)
+            return None
+        formula = calc_def.get('formula', '')
+        placeholders = re.findall(r'\{([^}]+)\}', formula)
+        deps = {}
+        missing = []
+        for ph in placeholders:
+            if ph in extracted_values:
+                deps[ph] = extracted_values[ph]
+            else:
+                deps[ph] = None
+                missing.append(ph)
+        if missing:
+            self._add_warning(sample_id, parser.file_path if parser else '',
+                              f"计算参数 {calc_id} 依赖缺失: {', '.join(missing)}", calc_id)
+            return None
+        expr = formula
+        for ph in placeholders:
+            if deps.get(ph) is None:
+                return None
+            expr = expr.replace(f'{{{ph}}}', str(deps[ph]))
+        try:
+            return eval(expr)
+        except Exception as e:
+            self._add_error(sample_id, parser.file_path if parser else '', calc_id, f"计算失败: {calc_id} - {e}")
+            return None
+
+    # ---------- 三种处理模式 ----------
     def _process_single_mode(self, sample_id, files):
         self._log(f"处理样品: {sample_id} (文件数: {len(files)})")
         for file_info in files:
@@ -178,33 +276,41 @@ class SampleProcessor:
                     self._extract_row_data_single(result_id, parser, result_index=idx)
                     self.stats['success'] += 1
 
+    def _extract_row_data_single(self, sample_id, parser, result_index=0):
+        columns = self.config.get_template_columns(self.template_name)
+        row_data = {'DATE_META': parser.get_date() if parser else None,
+                    'SAMPLE_ID_META': sample_id}
+        extracted = self._extract_from_parsers([parser], sample_id, columns, 'single', result_index)
+        row_data.update(extracted)
+        self.results.append(row_data)
+        extracted_count = sum(1 for v in extracted.values() if v is not None)
+        failed_count = len(extracted) - extracted_count
+        self._log(f"  ✅ 提取汇总: ✓ {extracted_count} 个参数, ✗ {failed_count} 个参数缺失",
+                  'success' if failed_count == 0 else 'warning')
+
     def _process_voi_mode(self, sample_id, files):
+        # 按路径排序（含VOI编号优先）
         def sort_key(f):
             if f.get('is_voi_pattern', False):
-                return (0, f.get('voi_idx', 0), f.get('folder_name', ''))
+                return (0, f.get('voi_idx', 0), f.get('path', ''))
             else:
-                return (1, 0, f.get('folder_name', ''))
+                return (1, 0, f.get('path', ''))
         files_sorted = sorted(files, key=sort_key)
         self._log(f"处理样品: {sample_id} (扫描到 {len(files_sorted)} 个文件夹)")
 
+        columns = self.config.get_template_columns(self.template_name)
         voi_rows = []
         for file_info in files_sorted:
             parser = file_info['parser']
-            row_data = self._extract_row_data_voi(
-                sample_id, parser,
-                folder_name=file_info.get('folder_name', ''),
-                voi_idx=file_info.get('voi_idx', 0)
-            )
-
-            columns = self.config.get_template_columns(self.template_name)
-            has_data = False
-            for col in columns:
-                eid = col['extract_id']
-                if eid not in ['DATE_META', 'SAMPLE_ID_META', 'FOLDER_NAME']:
-                    val = row_data.get(eid)
-                    if val is not None and str(val).strip() != '':
-                        has_data = True
-                        break
+            row_data = {'DATE_META': parser.get_date() if parser else None,
+                        'SAMPLE_ID_META': sample_id,
+                        'FOLDER_NAME': file_info.get('folder_name', ''),
+                        'PARENT_FOLDER_NAME': file_info.get('parent_folder_name', '')}
+            extracted = self._extract_from_parsers([parser], sample_id, columns, 'voi', 0)
+            row_data.update(extracted)
+            # 检查是否有数据
+            has_data = any(v is not None and str(v).strip() != '' for k, v in extracted.items()
+                           if k not in ['DATE_META', 'SAMPLE_ID_META', 'FOLDER_NAME'])
             if has_data:
                 voi_rows.append(row_data)
                 self._log(f"  ✅ 有效文件夹: {file_info.get('folder_name', '')}", 'info')
@@ -215,10 +321,51 @@ class SampleProcessor:
             self._log(f"  ⚠ 没有有效数据，跳过样品 {sample_id}", 'warning')
             return
 
-        self._log(f"  📊 实际合并 {len(voi_rows)} 个有效文件夹，列表: {[r.get('FOLDER_NAME', '') for r in voi_rows]}", 'info')
+        self._log(f"  📊 实际合并 {len(voi_rows)} 个有效文件夹", 'info')
         merged_row = self._merge_voi_rows_with_spacer(voi_rows, sample_id)
         self.results.append(merged_row)
         self.stats['success'] += 1
+
+    def _merge_voi_rows_with_spacer(self, rows, sample_id):
+        if not rows:
+            return {}
+        base_row = {'日期': rows[0]['DATE_META'], '样品ID': sample_id}
+        columns = self.config.get_template_columns(self.template_name)
+        id_to_col = {}
+        for col in columns:
+            eid = col['extract_id']
+            if eid not in ['DATE_META', 'SAMPLE_ID_META', 'FOLDER_NAME']:
+                id_to_col[eid] = col['column_name']
+        param_ids = list(id_to_col.keys())
+
+        folder_names = [row.get('FOLDER_NAME', f'Folder{i+1}') for i, row in enumerate(rows)]
+        seen = {}
+        unique_suffixes = []
+        for name in folder_names:
+            if name not in seen:
+                seen[name] = 1
+                unique_suffixes.append(name)
+            else:
+                seen[name] += 1
+                unique_suffixes.append(f"{name}_{seen[name]}")
+
+        for i, row in enumerate(rows):
+            if i > 0:
+                base_row[f"间隔_{i}_1"] = None
+                base_row[f"间隔_{i}_2"] = None
+
+            suffix = f"_{unique_suffixes[i]}"
+            folder_name = row.get('FOLDER_NAME', '')
+            parent_folder = row.get('PARENT_FOLDER_NAME', '')
+            display_folder = f"{parent_folder}_{folder_name}" if parent_folder else folder_name
+            base_row[f"文件夹名{suffix}"] = display_folder
+
+            for param_id in param_ids:
+                col_name = id_to_col[param_id]
+                key = f"{col_name}{suffix}"
+                base_row[key] = row.get(param_id, None)
+
+        return base_row
 
     def _process_pair_mode(self, sample_id, files):
         has_trab = any(f['type'] == 'trabecular' for f in files)
@@ -254,249 +401,28 @@ class SampleProcessor:
             self._log(f"  ✗ 跳过: 无有效数据", 'warning')
             self._add_warning(sample_id, '', "无有效数据")
 
-    def _extract_row_data_single(self, sample_id, parser, result_index=0):
-        """单品模式：单CSV，支持多3D结果（横向展开）"""
-        row_data = {
-            'DATE_META': parser.get_date() if parser else None,
-            'SAMPLE_ID_META': sample_id,
-        }
-        columns = self.config.get_template_columns(self.template_name)
-        if self.verbose:
-            self._log(f"  📋 开始按模板顺序提取参数 (共 {len(columns)} 列):", 'detail')
-        extracted_values = {}
-        for col_def in columns:
-            extract_id = col_def['extract_id']
-            if extract_id in row_data or extract_id in self.config.calc_params:
-                continue
-            rule = self.config.get_extract_rule(extract_id)
-            if not rule:
-                self._add_warning(sample_id, parser.file_path if parser else '', f"未知提取指令: {extract_id}", extract_id)
-                continue
-            source = rule['source']
-            param_id = rule['param_id']
-            value = None
-            if source == '3D':
-                value = parser.extract_3d_value(param_id, result_index)
-            elif source == '2D':
-                value = parser.extract_2d_value(param_id, result_index)
-            elif source == 'Histogram':
-                value = parser.extract_histogram_value(param_id, result_index)
-                if value is None:
-                    self._add_warning(sample_id, parser.file_path if parser else '', f"直方图提取失败: {extract_id}", extract_id)
-            else:
-                value = None
-            extracted_values[extract_id] = value
-            if self.verbose:
-                status = '✓' if value is not None else '✗'
-                idx_info = f"[{result_index+1}]" if result_index > 0 else ""
-                self._log(f"      {status} {extract_id}{idx_info} ← {source} = {value}", 'detail')
-            if value is None and source != 'Histogram':
-                self._add_error(sample_id, parser.file_path if parser else '', extract_id, f"提取失败: {extract_id} 返回 None")
-
-        for col_def in columns:
-            extract_id = col_def['extract_id']
-            if extract_id in self.config.calc_params:
-                calc_result = self._calc_param(extract_id, extracted_values, sample_id, parser)
-                extracted_values[extract_id] = calc_result
-                if self.verbose:
-                    status = '✓' if calc_result is not None else '✗'
-                    self._log(f"      [计算] {extract_id} {status} = {calc_result}", 'detail')
-
-        for extract_id, value in extracted_values.items():
-            row_data[extract_id] = value
-        self.results.append(row_data)
-        extracted_count = sum(1 for v in extracted_values.values() if v is not None)
-        failed_count = len(extracted_values) - extracted_count
-        self._log(f"  ✅ 提取汇总: ✓ {extracted_count} 个参数, ✗ {failed_count} 个参数缺失",
-                  'success' if failed_count == 0 else 'warning')
-
-    def _extract_row_data_voi(self, sample_id, parser, folder_name='', voi_idx=0):
-        """VOI模式：单个文件夹的行数据"""
-        row_data = {
-            'DATE_META': parser.get_date() if parser else None,
-            'SAMPLE_ID_META': sample_id,
-            'FOLDER_NAME': folder_name,
-        }
-        columns = self.config.get_template_columns(self.template_name)
-        for col_def in columns:
-            extract_id = col_def['extract_id']
-            if extract_id in row_data or extract_id in self.config.calc_params:
-                continue
-            rule = self.config.get_extract_rule(extract_id)
-            if not rule:
-                continue
-            source = rule['source']
-            param_id = rule['param_id']
-            value = None
-            if source == '3D':
-                value = parser.extract_3d_value(param_id, 0)
-            elif source == '2D':
-                value = parser.extract_2d_value(param_id, 0)
-            elif source == 'Histogram':
-                value = parser.extract_histogram_value(param_id, 0)
-            row_data[extract_id] = value
-
-        for col_def in columns:
-            extract_id = col_def['extract_id']
-            if extract_id in self.config.calc_params:
-                calc_result = self._calc_param(extract_id, row_data, sample_id, parser)
-                row_data[extract_id] = calc_result
-        return row_data
-
     def _extract_row_data_pair(self, sample_id, trab_parser, cort_parser):
-        """配对模式：松质+皮质"""
         parser = trab_parser or cort_parser
-        row_data = {
-            'DATE_META': parser.get_date() if parser else None,
-            'SAMPLE_ID_META': sample_id,
-        }
+        row_data = {'DATE_META': parser.get_date() if parser else None,
+                    'SAMPLE_ID_META': sample_id}
         columns = self.config.get_template_columns(self.template_name)
-        if self.verbose:
-            self._log(f"  📋 开始按模板顺序提取参数 (共 {len(columns)} 列):", 'detail')
-        extracted_values = {}
-        for col_def in columns:
-            extract_id = col_def['extract_id']
-            if extract_id in row_data or extract_id in self.config.calc_params:
-                continue
-            rule = self.config.get_extract_rule(extract_id)
-            if not rule:
-                self._add_warning(sample_id, parser.file_path if parser else '', f"未知提取指令: {extract_id}", extract_id)
-                continue
-            source = rule['source']
-            param_id = rule['param_id']
-            value = None
-            if '_trab_' in extract_id:
-                if trab_parser:
-                    if source == '3D':
-                        value = trab_parser.extract_3d_value(param_id)
-                    elif source == 'Histogram':
-                        value = trab_parser.extract_histogram_value(param_id)
-                        if value is None:
-                            self._add_warning(sample_id, trab_parser.file_path, f"直方图提取失败: {extract_id}", extract_id)
-                else:
-                    value = None
-            elif '_cort_' in extract_id:
-                if cort_parser:
-                    if source == '3D':
-                        value = cort_parser.extract_3d_value(param_id)
-                    elif source == '2D':
-                        value = cort_parser.extract_2d_value(param_id)
-                    elif source == 'Histogram':
-                        value = cort_parser.extract_histogram_value(param_id)
-                        if value is None:
-                            self._add_warning(sample_id, cort_parser.file_path, f"直方图提取失败: {extract_id}", extract_id)
-                else:
-                    value = None
-            else:
-                value = None
-            extracted_values[extract_id] = value
-            if self.verbose:
-                status = '✓' if value is not None else '✗'
-                src = '松质' if '_trab_' in extract_id else '皮质' if '_cort_' in extract_id else '未知'
-                self._log(f"      {status} {extract_id} ← {src} = {value}", 'detail')
-            if value is None and source != 'Histogram':
-                file_path = ''
-                if '_trab_' in extract_id and trab_parser:
-                    file_path = trab_parser.file_path
-                elif '_cort_' in extract_id and cort_parser:
-                    file_path = cort_parser.file_path
-                self._add_error(sample_id, file_path, extract_id, f"提取失败: {extract_id} 返回 None")
-
-        for col_def in columns:
-            extract_id = col_def['extract_id']
-            if extract_id in self.config.calc_params:
-                calc_result = self._calc_param(extract_id, extracted_values, sample_id, parser)
-                extracted_values[extract_id] = calc_result
-                if self.verbose:
-                    status = '✓' if calc_result is not None else '✗'
-                    self._log(f"      [计算] {extract_id} {status} = {calc_result}", 'detail')
-
-        for extract_id, value in extracted_values.items():
-            row_data[extract_id] = value
+        parsers = {'trab': trab_parser, 'cort': cort_parser}
+        extracted = self._extract_from_parsers(parsers, sample_id, columns, 'pair', 0)
+        row_data.update(extracted)
         self.results.append(row_data)
-        extracted_count = sum(1 for v in extracted_values.values() if v is not None)
-        failed_count = len(extracted_values) - extracted_count
+        extracted_count = sum(1 for v in extracted.values() if v is not None)
+        failed_count = len(extracted) - extracted_count
         self._log(f"  ✅ 提取汇总: ✓ {extracted_count} 个参数, ✗ {failed_count} 个参数缺失",
                   'success' if failed_count == 0 else 'warning')
 
-    def _calc_param(self, calc_id, extracted_values, sample_id, parser):
-        """统一的计算参数方法"""
-        calc_def = self.config.get_calc_param(calc_id)
-        if not calc_def:
-            self._add_warning(sample_id, parser.file_path if parser else '', f"计算参数定义缺失: {calc_id}", calc_id)
-            return None
-        formula = calc_def.get('formula', '')
-        placeholders = re.findall(r'\{([^}]+)\}', formula)
-        deps = {}
-        missing = []
-        for ph in placeholders:
-            if ph in extracted_values:
-                deps[ph] = extracted_values[ph]
-            else:
-                deps[ph] = None
-                missing.append(ph)
-        if missing:
-            self._add_warning(sample_id, parser.file_path if parser else '',
-                             f"计算参数 {calc_id} 依赖缺失: {', '.join(missing)}", calc_id)
-            return None
-        expr = formula
-        for ph in placeholders:
-            if deps.get(ph) is None:
-                return None
-            expr = expr.replace(f'{{{ph}}}', str(deps[ph]))
-        try:
-            return eval(expr)
-        except Exception as e:
-            self._add_error(sample_id, parser.file_path if parser else '', calc_id, f"计算失败: {calc_id} - {e}")
-            return None
-
-    def _merge_voi_rows_with_spacer(self, rows, sample_id):
-        """横向合并多个文件夹行，每组之间插入2列空白列"""
-        if not rows:
-            return {}
-        base_row = {'日期': rows[0]['DATE_META'], '样品ID': sample_id}
-        columns = self.config.get_template_columns(self.template_name)
-        id_to_col = {}
-        for col in columns:
-            eid = col['extract_id']
-            if eid not in ['DATE_META', 'SAMPLE_ID_META', 'FOLDER_NAME']:
-                id_to_col[eid] = col['column_name']
-        param_ids = list(id_to_col.keys())
-
-        folder_names = [row.get('FOLDER_NAME', f'Folder{i+1}') for i, row in enumerate(rows)]
-        seen = {}
-        unique_suffixes = []
-        for name in folder_names:
-            if name not in seen:
-                seen[name] = 1
-                unique_suffixes.append(name)
-            else:
-                seen[name] += 1
-                unique_suffixes.append(f"{name}_{seen[name]}")
-
-        for i, row in enumerate(rows):
-            if i > 0:
-                base_row[f"空白_{i}_1"] = None
-                base_row[f"空白_{i}_2"] = None
-
-            suffix = f"_{unique_suffixes[i]}"
-            base_row[f"文件夹名{suffix}"] = row.get('FOLDER_NAME', '')
-            for param_id in param_ids:
-                col_name = id_to_col[param_id]
-                key = f"{col_name}{suffix}"
-                base_row[key] = row.get(param_id, None)
-
-        return base_row
-
+    # ---------- 导出方法 ----------
     def export_to_excel(self, output_path):
         if not self.results:
             self._log("没有数据可导出")
             return False
 
-        # ---- VOI模式：保留所有空白列，每组之间2列 ----
         if self.is_voi_mode:
             df = pd.DataFrame(self.results)
-            df.columns = ['' if '空白' in col else col for col in df.columns]
             current_cols = df.columns.tolist()
             ordered_cols = []
             for col in ['日期', '样品ID']:
@@ -510,7 +436,6 @@ class SampleProcessor:
             self._log(f"已导出到: {output_path}")
             return True
 
-        # ---- 单文件模式：横向展开多个结果 ----
         if self.is_single_mode:
             columns = self.config.get_template_columns(self.template_name)
             columns = sorted(columns, key=lambda x: x['order'])
@@ -530,7 +455,6 @@ class SampleProcessor:
                 groups.setdefault(base_sample, []).append(row_data)
 
             max_results = max((len(rows) for rows in groups.values()), default=0)
-
             expanded_rows = []
             for base_sample, rows in groups.items():
                 date_val = rows[0].get('DATE_META', None)
@@ -561,7 +485,7 @@ class SampleProcessor:
             self._log(f"已导出到: {output_path}")
             return True
 
-        # ---- 标准配对模式：按模板顺序 ----
+        # 配对模式
         columns = self.config.get_template_columns(self.template_name)
         columns = sorted(columns, key=lambda x: x['order'])
         col_names = [c['column_name'] for c in columns]

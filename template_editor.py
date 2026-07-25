@@ -1,8 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-模板编辑器模块 - 积木式拖拽排列参数，自动添加单位（使用CSV列名）
-特殊处理 DA 和 DA(math)
-新增：样品ID规则配置与预览
+模板编辑器模块
 """
 
 import os
@@ -58,7 +56,7 @@ class TemplateEditor:
         ttk.Button(btn_frame, text="📝 另存为新模板", command=self._save_as_template, width=14).pack(side=tk.LEFT, padx=2)
         ttk.Button(btn_frame, text="🗑 删除当前模板", command=self._delete_template, width=12).pack(side=tk.LEFT, padx=2)
 
-        # ---- 样品ID规则配置区域 ----
+        # 样品ID规则
         rule_frame = ttk.LabelFrame(main_frame, text="🔑 样品ID生成规则", padding="5")
         rule_frame.pack(fill=tk.X, pady=(0, 10))
 
@@ -97,7 +95,7 @@ class TemplateEditor:
 
         ttk.Separator(main_frame, orient='horizontal').pack(fill=tk.X, pady=5)
 
-        # ---- 主体：可用参数 + 已选参数 ----
+        # 主体
         body_frame = ttk.Frame(main_frame)
         body_frame.pack(fill=tk.BOTH, expand=True, pady=5)
 
@@ -241,20 +239,18 @@ class TemplateEditor:
         self.all_available_params = []
         seen = set()
 
+        # 从ExtractRules加载
         for rule_id, rule in self.config.extract_rules.items():
             if rule_id not in seen:
                 param_def = self.config.get_param_def(rule.get('param_id', ''))
                 display_name = param_def.get('full_name', '') if param_def else ''
-                if display_name:
-                    label = f"{display_name} [{rule_id}]"
-                else:
-                    label = rule_id
-                source = rule.get('source', '')
-                item = (rule_id, label, source)
+                label = f"{display_name} [{rule_id}]" if display_name else rule_id
+                item = (rule_id, label, rule.get('source', ''))
                 self.available_params.append(item)
                 self.all_available_params.append(item)
                 seen.add(rule_id)
 
+        # 计算参数
         for calc_id, calc_def in self.config.calc_params.items():
             if calc_id not in seen:
                 display_name = calc_def.get('display_name', calc_id)
@@ -264,10 +260,10 @@ class TemplateEditor:
                 self.all_available_params.append(item)
                 seen.add(calc_id)
 
+        # 元数据（不含股骨）
         meta_params = [
             ('DATE_META', '日期 [DATE_META]', 'META'),
             ('SAMPLE_ID_META', '样品ID [SAMPLE_ID_META]', 'META'),
-            ('FEMUR_META', '股骨 [FEMUR_META]', 'META'),
         ]
         for meta_id, label, source in meta_params:
             if meta_id not in seen:
@@ -412,7 +408,6 @@ class TemplateEditor:
         meta_names = {
             'DATE_META': '日期',
             'SAMPLE_ID_META': '样品ID',
-            'FEMUR_META': '股骨'
         }
         if rule_id in meta_names:
             return meta_names[rule_id]
@@ -430,13 +425,9 @@ class TemplateEditor:
                 col_name = param_def.get('csv_column', '')
                 unit = param_def.get('unit', '')
                 if col_name:
-                    if unit:
-                        return f"{col_name} ({unit})"
-                    return col_name
+                    return f"{col_name} ({unit})" if unit else col_name
                 full_name = param_def.get('full_name', '')
-                if unit:
-                    return f"{full_name} ({unit})"
-                return full_name
+                return f"{full_name} ({unit})" if unit else full_name
 
         for rid, display, _ in self.all_available_params:
             if rid == rule_id:

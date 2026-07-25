@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 CSV解析模块 - 支持多种直方图单位，每个3D结果独立绑定各单位段
-增强2D数据行检测（支持无扩展名文件名）
+优化：简化2D检测（只保留基于图片扩展名的判断），合并提取方法
 """
 
 import os
@@ -62,77 +62,15 @@ class CSVParser:
 
             # ---- 2D 分析段 ----
             if '2D analysis' in stripped:
-                param_idx = None
-                data_idx = None
-                for j in range(i, min(i + 80, len(self.lines))):
-                    if 'File name,Z position' in self.lines[j]:
-                        param_idx = j
-                        for k in range(j + 1, len(self.lines)):
-                            lk = self.lines[k].strip()
-                            if not lk:
-                                continue
-                            if 'um' in lk or '%' in lk or '1/um' in lk:
-                                continue
-                            if 'Pos.Z' in lk or 'Obj.N' in lk:
-                                continue
-                            parts = lk.split(',')
-                            if len(parts) >= 2:
-                                first = parts[0].strip()
-                                # 检查是否以图片扩展名结尾
-                                if re.search(r'\.(bmp|tif|tiff|jpg|jpeg|png)$', first, re.I):
-                                    try:
-                                        if parts[1].strip():
-                                            float(parts[1].strip())
-                                        data_idx = k
-                                        break
-                                    except:
-                                        pass
-                                # ★ 无扩展名数据行检测
-                                elif re.match(r'^[\w\-]+$', first) and any(c.isdigit() for c in first):
-                                    try:
-                                        if parts[1].strip():
-                                            float(parts[1].strip())
-                                        data_idx = k
-                                        break
-                                    except:
-                                        pass
-                        break
-                if param_idx is not None and data_idx is not None:
-                    two_d_blocks.append({
-                        'start': i,
-                        'param_row_idx': param_idx,
-                        'data_start_idx': data_idx
-                    })
+                block = self._find_2d_block(i)
+                if block:
+                    two_d_blocks.append(block)
 
             # ---- 3D 分析段（只取 "3D-analysis summary"） ----
             if '3D-analysis summary' in stripped and '3D analysis' not in stripped:
-                param_idx = None
-                data_idx = None
-                for j in range(i, min(i + 80, len(self.lines))):
-                    line_j = self.lines[j].strip()
-                    if 'TV' in line_j and 'BV' in line_j and 'BV/TV' in line_j:
-                        param_idx = j
-                        for k in range(j + 1, len(self.lines)):
-                            lk = self.lines[k].strip()
-                            if not lk:
-                                continue
-                            if 'U^3' in lk or 'U^2' in lk or '1/U' in lk:
-                                continue
-                            parts = lk.split(',')
-                            if len(parts) > 6:
-                                try:
-                                    float(parts[6].strip())
-                                    data_idx = k
-                                    break
-                                except:
-                                    pass
-                        break
-                if param_idx is not None and data_idx is not None:
-                    three_d_blocks.append({
-                        'start': i,
-                        'param_row_idx': param_idx,
-                        'data_row_idx': data_idx
-                    })
+                block = self._find_3d_block(i)
+                if block:
+                    three_d_blocks.append(block)
 
             # ---- 日期 ----
             if 'Date and time' in stripped:
@@ -144,36 +82,27 @@ class CSVParser:
         # 按单位分组直方图段
         hist_blocks_by_unit = {}
         for hb in hist_blocks:
-            unit = hb['unit']
-            if unit not in hist_blocks_by_unit:
-                hist_blocks_by_unit[unit] = []
-            hist_blocks_by_unit[unit].append(hb)
+            hist_blocks_by_unit.setdefault(hb['unit'], []).append(hb)
 
-        # 对每个单位，维护已使用的段索引
         used_per_unit = {unit: [False] * len(blocks) for unit, blocks in hist_blocks_by_unit.items()}
-
-        # 2D 段使用标记
         used_2d = [False] * len(two_d_blocks)
 
-        # 为每个3D段分配直方图和2D段
         for three in three_d_blocks:
             three_start = three['start']
-
-            # ---- 为每种单位分配最近的前一个未使用的段 ----
+            # 分配直方图
             hist_starts = {}
             for unit, blocks in hist_blocks_by_unit.items():
-                assigned_idx = -1
+                assigned = -1
                 for idx in range(len(blocks) - 1, -1, -1):
                     if blocks[idx]['start'] < three_start and not used_per_unit[unit][idx]:
-                        assigned_idx = idx
+                        assigned = idx
                         break
-                if assigned_idx != -1:
-                    used_per_unit[unit][assigned_idx] = True
-                    hist_starts[unit] = blocks[assigned_idx]['start']
+                if assigned != -1:
+                    used_per_unit[unit][assigned] = True
+                    hist_starts[unit] = blocks[assigned]['start']
                 else:
                     hist_starts[unit] = None
-
-            # ---- 分配2D段 ----
+            # 分配2D
             two_idx = -1
             for idx in range(len(two_d_blocks) - 1, -1, -1):
                 if two_d_blocks[idx]['start'] < three_start and not used_2d[idx]:
@@ -192,10 +121,68 @@ class CSVParser:
 
         if two_d_blocks:
             sections['has_2d'] = True
-            sections['2d_param_row_idx'] = two_d_blocks[0]['param_row_idx'] if two_d_blocks else None
-            sections['2d_data_start_idx'] = two_d_blocks[0]['data_start_idx'] if two_d_blocks else None
+            sections['2d_param_row_idx'] = two_d_blocks[0]['param_row_idx']
+            sections['2d_data_start_idx'] = two_d_blocks[0]['data_start_idx']
 
         return sections
+
+    def _find_2d_block(self, start_line):
+        """从start_line开始查找2D参数行和数据行，返回字典或None"""
+        param_idx = None
+        data_idx = None
+        for j in range(start_line, min(start_line + 80, len(self.lines))):
+            if 'File name,Z position' in self.lines[j]:
+                param_idx = j
+                for k in range(j + 1, len(self.lines)):
+                    lk = self.lines[k].strip()
+                    if not lk:
+                        continue
+                    if 'um' in lk or '%' in lk or '1/um' in lk:
+                        continue
+                    if 'Pos.Z' in lk or 'Obj.N' in lk:
+                        continue
+                    parts = lk.split(',')
+                    if len(parts) >= 2:
+                        first = parts[0].strip()
+                        # 检测是否为图片文件名（含扩展名）
+                        if re.search(r'\.(bmp|tif|tiff|jpg|jpeg|png)$', first, re.I):
+                            try:
+                                float(parts[1].strip())
+                                data_idx = k
+                                break
+                            except:
+                                pass
+                break
+        if param_idx is not None and data_idx is not None:
+            return {'start': start_line, 'param_row_idx': param_idx, 'data_start_idx': data_idx}
+        return None
+
+    def _find_3d_block(self, start_line):
+        """从start_line开始查找3D参数行和数据行，返回字典或None"""
+        param_idx = None
+        data_idx = None
+        for j in range(start_line, min(start_line + 80, len(self.lines))):
+            line_j = self.lines[j].strip()
+            if 'TV' in line_j and 'BV' in line_j and 'BV/TV' in line_j:
+                param_idx = j
+                for k in range(j + 1, len(self.lines)):
+                    lk = self.lines[k].strip()
+                    if not lk:
+                        continue
+                    if 'U^3' in lk or 'U^2' in lk or '1/U' in lk:
+                        continue
+                    parts = lk.split(',')
+                    if len(parts) > 6:
+                        try:
+                            float(parts[6].strip())
+                            data_idx = k
+                            break
+                        except:
+                            pass
+                break
+        if param_idx is not None and data_idx is not None:
+            return {'start': start_line, 'param_row_idx': param_idx, 'data_row_idx': data_idx}
+        return None
 
     def get_section_info(self):
         return self.sections
@@ -212,32 +199,39 @@ class CSVParser:
     def get_3d_count(self):
         return len(self.sections.get('3d_results', []))
 
-    def extract_2d_value(self, param_id, result_index=0):
-        results = self.sections.get('3d_results', [])
-        if not results or result_index >= len(results):
+    def extract_value(self, section_type, param_id, result_index=0):
+        """
+        统一提取方法
+        section_type: '2D', '3D', 'Histogram'
+        """
+        if section_type == '2D':
+            results = self.sections.get('3d_results', [])
+            if not results or result_index >= len(results):
+                return None
+            two_d_block = results[result_index].get('two_d_block')
+            if not two_d_block:
+                return None
+            return self._extract_value_from_table(
+                two_d_block['param_row_idx'],
+                two_d_block['data_start_idx'],
+                param_id
+            )
+        elif section_type == '3D':
+            results = self.sections.get('3d_results', [])
+            if not results or result_index >= len(results):
+                return None
+            result = results[result_index]
+            return self._extract_value_from_table(
+                result['param_row_idx'],
+                result['data_row_idx'],
+                param_id
+            )
+        elif section_type == 'Histogram':
+            return self._extract_histogram_value(param_id, result_index)
+        else:
             return None
-        two_d_block = results[result_index].get('two_d_block')
-        if not two_d_block:
-            return None
-        return self._extract_value_from_table(
-            two_d_block['param_row_idx'],
-            two_d_block['data_start_idx'],
-            param_id
-        )
 
-    def extract_3d_value(self, param_id, result_index=0):
-        results = self.sections.get('3d_results', [])
-        if not results or result_index >= len(results):
-            return None
-        result = results[result_index]
-        return self._extract_value_from_table(
-            result['param_row_idx'],
-            result['data_row_idx'],
-            param_id
-        )
-
-    def extract_histogram_value(self, param_id, result_index=0):
-        """提取直方图均值。param_id 用于确定单位（从 ParamDef 中读取 csv_column 作为单位名）"""
+    def _extract_histogram_value(self, param_id, result_index=0):
         results = self.sections.get('3d_results', [])
         if not results or result_index >= len(results):
             return None
