@@ -86,7 +86,7 @@ class TemplateEditor:
 
         self.rule_entry = ttk.Entry(rule_row1, width=40)
         self.rule_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
-        self.rule_entry.bind('<KeyRelease>', self._on_rule_entry_change)  # 实时预览
+        self.rule_entry.bind('<KeyRelease>', self._on_rule_entry_change)
 
         self.preview_btn = ttk.Button(rule_row1, text="👁 预览", command=self._preview_rule, width=8)
         self.preview_btn.pack(side=tk.LEFT, padx=5)
@@ -214,15 +214,12 @@ class TemplateEditor:
             rule = mapping[selected]
             self.rule_entry.delete(0, tk.END)
             self.rule_entry.insert(0, rule)
-            # 自动预览（如果有记忆文件）
             self._auto_preview()
 
     def _on_rule_entry_change(self, event):
-        # 手动修改规则时，自动预览（如果有记忆文件）
         self._auto_preview()
 
     def _auto_preview(self):
-        """如果有预览文件路径，则自动更新预览"""
         if self.preview_file_path:
             rule = self.rule_entry.get().strip()
             if not rule:
@@ -237,10 +234,8 @@ class TemplateEditor:
             except Exception as e:
                 self.preview_label.config(text=f"预览出错: {e}", foreground='red')
         else:
-            # 没有选择文件，显示提示
-            if self.preview_label.cget('text').startswith('预览:') and '请选择一个CSV文件' not in self.preview_label.cget('text'):
-                # 如果已有预览文本但不是提示，不清除
-                pass
+            # 保持提示
+            pass
 
     def _preview_rule(self):
         rule = self.rule_entry.get().strip()
@@ -255,7 +250,6 @@ class TemplateEditor:
         if not file_path:
             return
 
-        # 记忆文件路径
         self.preview_file_path = file_path
 
         try:
@@ -541,6 +535,11 @@ class TemplateEditor:
             messagebox.showerror("错误", f"保存失败: {e}")
 
     def _delete_template(self):
+        # 检查是否为内置模板（禁止删除）
+        if self.template_name in self.config.BUILTIN_NAMES:
+            messagebox.showwarning("警告", f"'{self.template_name}' 是内置默认模板，不允许删除！")
+            return
+
         if len(self.config.template_names) <= 1:
             messagebox.showwarning("警告", "至少保留一个模板")
             return

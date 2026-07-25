@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 """
 GUI界面模块 - 亮色主题
+优化：延迟导入、取消自动生成配置、UI先显示再加载配置
+版本：v3.2
 """
 
 import os
@@ -12,15 +14,11 @@ from datetime import datetime
 import ttkbootstrap as tb
 from ttkbootstrap.constants import *
 
-from config_loader import ConfigLoader, generate_default_config
-from data_processor import SampleProcessor
-from template_editor import TemplateEditor
-
 
 class MicroCTApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("MicroCT 骨参数自动提取工具 v3.1")
+        self.root.title("MicroCT 骨参数自动提取工具 v3.2")
         self.root.geometry("1150x820")
         self.root.minsize(1050, 750)
 
@@ -34,24 +32,23 @@ class MicroCTApp:
         self.open_folder = tk.BooleanVar(value=True)
         self.verbose_logging = tk.BooleanVar(value=True)
         self.is_running = False
+        # 初始默认模板列表（与内置模板一致）
         self.template_list = [
             '标准模板（长骨专用）区分松质骨皮质骨参数',
             '通用模板（一个样品CSV内多个ROI分析结果）',
             '通用模板（一组样品不同部位、重复同名CSV）'
         ]
         self._current_processor = None
+        self._config_loaded = False  # 标记配置是否已加载
 
         self._build_ui()
-        self._load_config()
+
+        # 延迟加载配置，先让窗口显示
+        self.root.after(100, self._load_config)
 
     def _init_config(self):
+        # 仅设置配置文件路径，不自动生成
         config_file = os.path.join(os.getcwd(), 'parameters.xlsx')
-        if not os.path.exists(config_file):
-            try:
-                generate_default_config(config_file)
-                print(f"已自动生成默认配置文件: {config_file}")
-            except Exception as e:
-                print(f"生成默认配置文件失败: {e}")
         self.config_path.set(config_file)
 
     def _build_ui(self):
@@ -60,15 +57,15 @@ class MicroCTApp:
 
         header_frame = ttk.Frame(main_frame)
         header_frame.pack(fill=tk.X, pady=(0, 15))
-        
-        title_label = ttk.Label(header_frame, text="🦴 MicroCT 骨参数自动提取工具", 
+
+        title_label = ttk.Label(header_frame, text="🦴 MicroCT 骨参数自动提取工具",
                                 font=('微软雅黑', 22, 'bold'), foreground='#1a56db')
         title_label.pack(side=tk.LEFT)
-        
-        version_label = ttk.Label(header_frame, text="v3.1", 
+
+        version_label = ttk.Label(header_frame, text="v3.2",
                                    font=('微软雅黑', 12), foreground='#94a3b8')
         version_label.pack(side=tk.LEFT, padx=(10, 0))
-        
+
         status_frame = ttk.Frame(header_frame)
         status_frame.pack(side=tk.RIGHT)
         self.status_dot = ttk.Label(status_frame, text="●", font=('微软雅黑', 16), foreground='#22c55e')
@@ -78,7 +75,7 @@ class MicroCTApp:
 
         stats_frame = ttk.Frame(main_frame)
         stats_frame.pack(fill=tk.X, pady=(0, 15))
-        
+
         stats_data = [
             ("📄 总样品", "0", "total", "#3b82f6"),
             ("✅ 成功", "0", "success", "#22c55e"),
@@ -86,20 +83,20 @@ class MicroCTApp:
             ("⚠️ 警告", "0", "warning", "#f97316"),
             ("❌ 错误", "0", "error", "#ef4444"),
         ]
-        
+
         self.stats_labels = {}
         for label, value, key, color in stats_data:
             card = ttk.Frame(stats_frame)
             card.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=4)
-            
-            val_lbl = ttk.Label(card, text=value, font=('微软雅黑', 28, 'bold'), 
+
+            val_lbl = ttk.Label(card, text=value, font=('微软雅黑', 28, 'bold'),
                                 foreground=color, anchor='center')
             val_lbl.pack(pady=(0, 0))
-            
-            name_lbl = ttk.Label(card, text=label, font=('微软雅黑', 11), 
+
+            name_lbl = ttk.Label(card, text=label, font=('微软雅黑', 11),
                                  foreground='#64748b', anchor='center')
             name_lbl.pack(pady=(0, 5))
-            
+
             self.stats_labels[key] = val_lbl
 
         config_frame = ttk.LabelFrame(main_frame, text="⚙️ 配置设置", bootstyle="light", padding="10")
@@ -115,10 +112,10 @@ class MicroCTApp:
         row2 = ttk.Frame(config_frame)
         row2.pack(fill=tk.X, pady=5)
         ttk.Label(row2, text="模板方案:", font=('微软雅黑', 11, 'bold'), width=12).pack(side=tk.LEFT)
-        
+
         self.template_menu_var = tk.StringVar(value=self.template_name.get())
         self.template_menu = tk.OptionMenu(
-            row2, 
+            row2,
             self.template_menu_var,
             *self.template_list,
             command=self._on_template_selected
@@ -144,7 +141,7 @@ class MicroCTApp:
             tearoff=0
         )
         self.template_menu.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(8, 8))
-        
+
         ttk.Button(row2, text="🔄 刷新", command=self._refresh_templates, bootstyle="outline-primary", width=10).pack(side=tk.LEFT, padx=(0, 5))
         ttk.Button(row2, text="✏️ 编辑模板", command=self._edit_template, bootstyle="outline-primary", width=12).pack(side=tk.LEFT)
 
@@ -165,7 +162,7 @@ class MicroCTApp:
 
         row5 = ttk.Frame(io_frame)
         row5.pack(fill=tk.X, pady=8)
-        ttk.Checkbutton(row5, text="📅 自动生成文件名（含日期）", variable=self.auto_filename, 
+        ttk.Checkbutton(row5, text="📅 自动生成文件名（含日期）", variable=self.auto_filename,
                         command=self._toggle_auto_filename).pack(side=tk.LEFT, padx=(0, 30))
         ttk.Checkbutton(row5, text="📂 处理完成后打开文件夹", variable=self.open_folder).pack(side=tk.LEFT, padx=(0, 30))
         ttk.Checkbutton(row5, text="📝 显示详细日志", variable=self.verbose_logging).pack(side=tk.LEFT)
@@ -173,31 +170,31 @@ class MicroCTApp:
         btn_frame = ttk.Frame(main_frame)
         btn_frame.pack(fill=tk.X, pady=(0, 10))
 
-        self.btn_start = ttk.Button(btn_frame, text="▶ 开始处理", command=self._start_processing, 
+        self.btn_start = ttk.Button(btn_frame, text="▶ 开始处理", command=self._start_processing,
                                      bootstyle="success", width=18)
         self.btn_start.pack(side=tk.LEFT, padx=(0, 10))
 
-        self.btn_stop = ttk.Button(btn_frame, text="⏹ 停止", command=self._stop_processing, 
+        self.btn_stop = ttk.Button(btn_frame, text="⏹ 停止", command=self._stop_processing,
                                     bootstyle="danger", width=14, state=tk.DISABLED)
         self.btn_stop.pack(side=tk.LEFT, padx=(0, 10))
 
-        ttk.Button(btn_frame, text="📋 查看配置", command=self._view_config, 
+        ttk.Button(btn_frame, text="📋 查看配置", command=self._view_config,
                    bootstyle="outline-primary", width=14).pack(side=tk.LEFT, padx=(0, 8))
-        ttk.Button(btn_frame, text="📤 导出错误日志", command=self._export_errors, 
+        ttk.Button(btn_frame, text="📤 导出错误日志", command=self._export_errors,
                    bootstyle="outline-primary", width=16).pack(side=tk.LEFT, padx=(0, 8))
-        ttk.Button(btn_frame, text="❓ 帮助", command=self._show_help, 
+        ttk.Button(btn_frame, text="❓ 帮助", command=self._show_help,
                    bootstyle="outline-primary", width=12).pack(side=tk.LEFT, padx=(0, 8))
-        ttk.Button(btn_frame, text="🗑 清空日志", command=self._clear_log, 
+        ttk.Button(btn_frame, text="🗑 清空日志", command=self._clear_log,
                    bootstyle="outline-primary", width=12).pack(side=tk.LEFT)
 
         progress_frame = ttk.Frame(main_frame)
         progress_frame.pack(fill=tk.X, pady=(0, 8))
-        
+
         self.progress_var = tk.DoubleVar()
-        self.progress_bar = ttk.Progressbar(progress_frame, variable=self.progress_var, 
+        self.progress_bar = ttk.Progressbar(progress_frame, variable=self.progress_var,
                                              maximum=100, bootstyle="primary-striped")
         self.progress_bar.pack(fill=tk.X)
-        
+
         self.progress_label = ttk.Label(progress_frame, text="", font=('微软雅黑', 10), foreground='#64748b')
         self.progress_label.pack(anchor=tk.W, pady=(4, 0))
 
@@ -217,8 +214,8 @@ class MicroCTApp:
         self.log_text.tag_config('error', foreground='#dc2626')
         self.log_text.tag_config('detail', foreground='#94a3b8')
 
-        self._log("🚀 欢迎使用 MicroCT 骨参数自动提取工具 v3.1", 'info')
-        self._log("💡 请选择输入目录并点击「开始处理」", 'info')
+        self._log("🚀 欢迎使用 MicroCT 骨参数自动提取工具 v3.2", 'info')
+        self._log("💡 正在加载配置，请稍候...", 'info')
 
     def _on_template_selected(self, value):
         self.template_name.set(value)
@@ -249,37 +246,63 @@ class MicroCTApp:
         self.stats_labels['error'].config(text=str(error))
 
     def _load_config(self):
-        try:
-            config = ConfigLoader(self.config_path.get())
-            config.load()
-            self.template_list = config.template_names if config.template_names else [
+        # 如果已经加载过则跳过
+        if self._config_loaded:
+            return
+        self._config_loaded = True
+
+        from config_loader import update_config_if_needed
+        update_config_if_needed(self.config_path.get())
+
+        if os.path.exists(self.config_path.get()):
+            try:
+                from config_loader import ConfigLoader
+                config = ConfigLoader(self.config_path.get())
+                config.load()
+                self.template_list = config.template_names if config.template_names else [
+                    '标准模板（长骨专用）区分松质骨皮质骨参数',
+                    '通用模板（一个样品CSV内多个ROI分析结果）',
+                    '通用模板（一组样品不同部位、重复同名CSV）'
+                ]
+                menu = self.template_menu['menu']
+                menu.delete(0, 'end')
+                for item in self.template_list:
+                    menu.add_command(label=item, command=lambda v=item: self._on_template_selected(v))
+
+                if self.template_name.get() not in self.template_list:
+                    if self.template_list:
+                        self.template_name.set(self.template_list[0])
+                        self.template_menu_var.set(self.template_list[0])
+                else:
+                    self.template_menu_var.set(self.template_name.get())
+
+                self._log(f"✅ 已加载配置: {self.config_path.get()}", 'success')
+                self._log(f"📋 当前模板: {self.template_name.get()}", 'info')
+            except Exception as e:
+                self._log(f"⚠️ 加载配置失败: {e}，使用内置模板", 'warning')
+        else:
+            # 配置文件不存在，使用内置模板
+            self._log("ℹ️ 配置文件不存在，使用内置默认模板", 'info')
+            self.template_list = [
                 '标准模板（长骨专用）区分松质骨皮质骨参数',
                 '通用模板（一个样品CSV内多个ROI分析结果）',
                 '通用模板（一组样品不同部位、重复同名CSV）'
             ]
-            
             menu = self.template_menu['menu']
             menu.delete(0, 'end')
             for item in self.template_list:
                 menu.add_command(label=item, command=lambda v=item: self._on_template_selected(v))
-            
             if self.template_name.get() not in self.template_list:
-                if self.template_list:
-                    self.template_name.set(self.template_list[0])
-                    self.template_menu_var.set(self.template_list[0])
-            else:
-                self.template_menu_var.set(self.template_name.get())
-            
-            self._log(f"✅ 已加载配置: {self.config_path.get()}", 'success')
-            self._log(f"📋 当前模板: {self.template_name.get()}", 'info')
-        except Exception as e:
-            self._log(f"⚠️ 加载配置失败: {e}", 'warning')
+                self.template_name.set(self.template_list[0])
+                self.template_menu_var.set(self.template_list[0])
 
     def _edit_template(self):
         if not os.path.exists(self.config_path.get()):
             messagebox.showerror("错误", "配置文件不存在，请先创建配置文件")
             return
         try:
+            from config_loader import ConfigLoader
+            from template_editor import TemplateEditor
             config = ConfigLoader(self.config_path.get())
             config.load()
             editor = TemplateEditor(
@@ -306,6 +329,7 @@ class MicroCTApp:
             self._load_config()
 
     def _create_default_config(self):
+        from config_loader import generate_default_config
         default_path = os.path.join(os.getcwd(), 'parameters.xlsx')
         path = filedialog.asksaveasfilename(
             title="保存配置文件",
@@ -355,7 +379,7 @@ class MicroCTApp:
 
     def _show_help(self):
         help_text = """
-🦴 MicroCT 骨参数自动提取工具 v3.1
+🦴 MicroCT 骨参数自动提取工具 v3.2
 
 【📖 使用说明】
 1. 选择或创建配置文件（.xlsx格式），点击"创建默认"生成
@@ -435,6 +459,9 @@ class MicroCTApp:
 
     def _process_worker(self):
         try:
+            from config_loader import ConfigLoader
+            from data_processor import SampleProcessor
+
             self._log("🚀 开始处理...", 'info')
             self._log(f"📁 配置文件: {self.config_path.get()}", 'info')
             self._log(f"📁 输入目录: {self.input_dir.get()}", 'info')
@@ -473,7 +500,7 @@ class MicroCTApp:
                 stats = processor.get_stats()
                 errors = processor.get_errors()
                 warnings = processor.get_warnings()
-                
+
                 self._update_stats(
                     total=stats['total'],
                     success=stats['success'],
@@ -481,7 +508,7 @@ class MicroCTApp:
                     warning=stats['warning'],
                     error=stats['error']
                 )
-                
+
                 self._log("✅ 处理完成！", 'success')
                 self._log(f"   📊 总样品: {stats['total']}", 'info')
                 self._log(f"   ✅ 成功: {stats['success']}", 'success')
