@@ -29,6 +29,9 @@ class TemplateEditor:
         self.drag_start_index = None
         self.drag_data = None
 
+        # 用于预览的文件路径记忆
+        self.preview_file_path = None
+
         self._build_window()
         self._load_available_params()
         self._load_current_template()
@@ -83,6 +86,7 @@ class TemplateEditor:
 
         self.rule_entry = ttk.Entry(rule_row1, width=40)
         self.rule_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+        self.rule_entry.bind('<KeyRelease>', self._on_rule_entry_change)  # 实时预览
 
         self.preview_btn = ttk.Button(rule_row1, text="👁 预览", command=self._preview_rule, width=8)
         self.preview_btn.pack(side=tk.LEFT, padx=5)
@@ -210,7 +214,33 @@ class TemplateEditor:
             rule = mapping[selected]
             self.rule_entry.delete(0, tk.END)
             self.rule_entry.insert(0, rule)
-            self.preview_label.config(text="预览: (请点击『预览』按钮查看)")
+            # 自动预览（如果有记忆文件）
+            self._auto_preview()
+
+    def _on_rule_entry_change(self, event):
+        # 手动修改规则时，自动预览（如果有记忆文件）
+        self._auto_preview()
+
+    def _auto_preview(self):
+        """如果有预览文件路径，则自动更新预览"""
+        if self.preview_file_path:
+            rule = self.rule_entry.get().strip()
+            if not rule:
+                self.preview_label.config(text="预览: 规则为空", foreground='orange')
+                return
+            try:
+                sample_id = extract_sample_id(self.preview_file_path, rule)
+                if sample_id:
+                    self.preview_label.config(text=f"预览: '{sample_id}'", foreground='green')
+                else:
+                    self.preview_label.config(text="预览: 规则未匹配到任何内容，请检查占位符", foreground='red')
+            except Exception as e:
+                self.preview_label.config(text=f"预览出错: {e}", foreground='red')
+        else:
+            # 没有选择文件，显示提示
+            if self.preview_label.cget('text').startswith('预览:') and '请选择一个CSV文件' not in self.preview_label.cget('text'):
+                # 如果已有预览文本但不是提示，不清除
+                pass
 
     def _preview_rule(self):
         rule = self.rule_entry.get().strip()
@@ -224,6 +254,9 @@ class TemplateEditor:
         )
         if not file_path:
             return
+
+        # 记忆文件路径
+        self.preview_file_path = file_path
 
         try:
             sample_id = extract_sample_id(file_path, rule)
@@ -239,7 +272,6 @@ class TemplateEditor:
         self.all_available_params = []
         seen = set()
 
-        # 从ExtractRules加载
         for rule_id, rule in self.config.extract_rules.items():
             if rule_id not in seen:
                 param_def = self.config.get_param_def(rule.get('param_id', ''))
@@ -250,7 +282,6 @@ class TemplateEditor:
                 self.all_available_params.append(item)
                 seen.add(rule_id)
 
-        # 计算参数
         for calc_id, calc_def in self.config.calc_params.items():
             if calc_id not in seen:
                 display_name = calc_def.get('display_name', calc_id)
@@ -260,7 +291,6 @@ class TemplateEditor:
                 self.all_available_params.append(item)
                 seen.add(calc_id)
 
-        # 元数据（不含股骨）
         meta_params = [
             ('DATE_META', '日期 [DATE_META]', 'META'),
             ('SAMPLE_ID_META', '样品ID [SAMPLE_ID_META]', 'META'),

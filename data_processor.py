@@ -82,8 +82,12 @@ class SampleProcessor:
             sections = parser.get_section_info()
 
             if self.is_voi_mode:
-                stem = os.path.splitext(os.path.basename(file_path))[0]
-                sample_id = stem.split('_')[0] if '_' in stem else stem
+                # 使用规则提取样品ID，与标准模式一致
+                sample_id = extract_sample_id(file_path, id_rule)
+                if not sample_id:
+                    self._log(f"警告: 无法提取样品ID: {file_path}", 'warning')
+                    self._add_warning('unknown', file_path, f"无法提取样品ID: {file_path}")
+                    continue
                 folder_name = os.path.basename(os.path.dirname(file_path))
                 parent_folder_name = os.path.basename(os.path.dirname(os.path.dirname(file_path)))
                 is_voi_pattern, voi_idx = extract_voi_index(file_path)
@@ -213,7 +217,6 @@ class SampleProcessor:
         for col_def in columns:
             extract_id = col_def['extract_id']
             if extract_id in self.config.calc_params:
-                # 获取有效的parser用于错误日志
                 valid_parser = None
                 if mode == 'single' and parsers:
                     valid_parser = parsers[0]
@@ -289,7 +292,6 @@ class SampleProcessor:
                   'success' if failed_count == 0 else 'warning')
 
     def _process_voi_mode(self, sample_id, files):
-        # 按路径排序（含VOI编号优先）
         def sort_key(f):
             if f.get('is_voi_pattern', False):
                 return (0, f.get('voi_idx', 0), f.get('path', ''))
@@ -308,7 +310,6 @@ class SampleProcessor:
                         'PARENT_FOLDER_NAME': file_info.get('parent_folder_name', '')}
             extracted = self._extract_from_parsers([parser], sample_id, columns, 'voi', 0)
             row_data.update(extracted)
-            # 检查是否有数据
             has_data = any(v is not None and str(v).strip() != '' for k, v in extracted.items()
                            if k not in ['DATE_META', 'SAMPLE_ID_META', 'FOLDER_NAME'])
             if has_data:

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 CSV解析模块 - 支持多种直方图单位，每个3D结果独立绑定各单位段
-优化：简化2D检测（只保留基于图片扩展名的判断），合并提取方法
+优化：简化2D检测（支持多种图片扩展名），合并提取方法
 """
 
 import os
@@ -130,6 +130,8 @@ class CSVParser:
         """从start_line开始查找2D参数行和数据行，返回字典或None"""
         param_idx = None
         data_idx = None
+        # 支持的图片扩展名（不区分大小写）
+        img_ext_pattern = r'\.(bmp|tif|tiff|jpg|jpeg|png|raw|isq|dcm|vff)$'
         for j in range(start_line, min(start_line + 80, len(self.lines))):
             if 'File name,Z position' in self.lines[j]:
                 param_idx = j
@@ -144,8 +146,8 @@ class CSVParser:
                     parts = lk.split(',')
                     if len(parts) >= 2:
                         first = parts[0].strip()
-                        # 检测是否为图片文件名（含扩展名）
-                        if re.search(r'\.(bmp|tif|tiff|jpg|jpeg|png)$', first, re.I):
+                        # 检测是否为支持的图片文件名
+                        if re.search(img_ext_pattern, first, re.I):
                             try:
                                 float(parts[1].strip())
                                 data_idx = k

@@ -20,7 +20,7 @@ from template_editor import TemplateEditor
 class MicroCTApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("MicroCT 骨参数自动提取工具 v3.0")
+        self.root.title("MicroCT 骨参数自动提取工具 v3.1")
         self.root.geometry("1150x820")
         self.root.minsize(1050, 750)
 
@@ -65,7 +65,7 @@ class MicroCTApp:
                                 font=('微软雅黑', 22, 'bold'), foreground='#1a56db')
         title_label.pack(side=tk.LEFT)
         
-        version_label = ttk.Label(header_frame, text="v3.0", 
+        version_label = ttk.Label(header_frame, text="v3.1", 
                                    font=('微软雅黑', 12), foreground='#94a3b8')
         version_label.pack(side=tk.LEFT, padx=(10, 0))
         
@@ -217,7 +217,7 @@ class MicroCTApp:
         self.log_text.tag_config('error', foreground='#dc2626')
         self.log_text.tag_config('detail', foreground='#94a3b8')
 
-        self._log("🚀 欢迎使用 MicroCT 骨参数自动提取工具 v3.0", 'info')
+        self._log("🚀 欢迎使用 MicroCT 骨参数自动提取工具 v3.1", 'info')
         self._log("💡 请选择输入目录并点击「开始处理」", 'info')
 
     def _on_template_selected(self, value):
@@ -355,7 +355,7 @@ class MicroCTApp:
 
     def _show_help(self):
         help_text = """
-🦴 MicroCT 骨参数自动提取工具 v3.0
+🦴 MicroCT 骨参数自动提取工具 v3.1
 
 【📖 使用说明】
 1. 选择或创建配置文件（.xlsx格式），点击"创建默认"生成
