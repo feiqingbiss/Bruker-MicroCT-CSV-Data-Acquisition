@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-配置加载模块 v3.2
+配置加载模块 v3.3
 内置三个默认模板，可从 Excel 加载自定义模板（合并覆盖内置同名模板）
 支持版本校验，自动更新配置
 """
@@ -10,7 +10,14 @@ import pandas as pd
 import numpy as np
 
 # 当前软件配置文件版本号
-CONFIG_VERSION = "3.2"
+CONFIG_VERSION = "3.3"
+
+# 内置模板名称集合（用于判断是否为内置模板）
+BUILTIN_TEMPLATE_NAMES = {
+    '标准模板（长骨专用）区分松质骨皮质骨参数',
+    '通用模板（一个样品CSV内多个ROI分析结果）',
+    '通用模板（一组样品不同部位、重复同名CSV）'
+}
 
 
 def get_default_config_data():
@@ -164,7 +171,8 @@ def get_default_config_data():
         {'参数ID': 'BArRatio_calc', '显示名称': 'Bone area ratio', '计算公式': '({BAr_calc} / {TAr_cort_2D}) * 100', '单位': '%', '数据类型': 'float'},
     ])
 
-    template_def_rows = [
+    # 内置三个模板定义
+    builtin_templates = [
         # 标准模板（长骨专用）
         {'模板名称': '标准模板（长骨专用）区分松质骨皮质骨参数', '列名': '日期', '提取指令': 'DATE_META', '顺序': 1, '样品ID规则': ''},
         {'模板名称': '标准模板（长骨专用）区分松质骨皮质骨参数', '列名': '样品ID', '提取指令': 'SAMPLE_ID_META', '顺序': 2, '样品ID规则': ''},
@@ -227,7 +235,8 @@ def get_default_config_data():
         {'模板名称': '通用模板（一组样品不同部位、重复同名CSV）', '列名': 'Po.V(tot)(um3)', '提取指令': 'PoVtot_trab_3D', '顺序': 17, '样品ID规则': ''},
         {'模板名称': '通用模板（一组样品不同部位、重复同名CSV）', '列名': 'Po(tot)(%)', '提取指令': 'Po_tot_trab_3D', '顺序': 18, '样品ID规则': ''},
     ]
-    df_template_def = pd.DataFrame(template_def_rows)
+
+    df_template_def = pd.DataFrame(builtin_templates)
 
     df_path_rules = pd.DataFrame([
         {'配置项': 'ID提取方式', '值': 'parent_folder_file_prefix'},
@@ -283,9 +292,8 @@ def update_config_if_needed(config_path):
             calc_params_df = None
             try:
                 template_df = pd.read_excel(config_path, sheet_name='TemplateDef')
-                # 提取自定义模板（名称不在 BUILTIN_NAMES 中）
-                builtin_names = ConfigLoader.BUILTIN_NAMES
-                custom_templates = template_df[~template_df['模板名称'].isin(builtin_names)].to_dict('records')
+                # 提取自定义模板（名称不在内置集合中）
+                custom_templates = template_df[~template_df['模板名称'].isin(BUILTIN_TEMPLATE_NAMES)].to_dict('records')
             except Exception:
                 pass
             try:
@@ -488,7 +496,6 @@ class ConfigLoader:
                 if tname not in self.template_names:
                     self.template_names.append(tname)
 
-    # 其余加载方法（ParamDef, ExtractRules, CalcParams, PathRules, GrayUnitConfig）保持不变
     def _load_param_def(self, xl):
         df = pd.read_excel(xl, sheet_name='ParamDef')
         self.param_defs = {}

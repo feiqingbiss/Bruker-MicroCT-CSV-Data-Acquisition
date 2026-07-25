@@ -2,7 +2,7 @@
 """
 GUI界面模块 - 亮色主题
 优化：延迟导入、取消自动生成配置、UI先显示再加载配置
-版本：v3.2
+版本：v3.3
 """
 
 import os
@@ -18,7 +18,7 @@ from ttkbootstrap.constants import *
 class MicroCTApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("MicroCT 骨参数自动提取工具 v3.2")
+        self.root.title("MicroCT 骨参数自动提取工具 v3.3")
         self.root.geometry("1150x820")
         self.root.minsize(1050, 750)
 
@@ -39,7 +39,6 @@ class MicroCTApp:
             '通用模板（一组样品不同部位、重复同名CSV）'
         ]
         self._current_processor = None
-        self._config_loaded = False  # 标记配置是否已加载
 
         self._build_ui()
 
@@ -62,7 +61,7 @@ class MicroCTApp:
                                 font=('微软雅黑', 22, 'bold'), foreground='#1a56db')
         title_label.pack(side=tk.LEFT)
 
-        version_label = ttk.Label(header_frame, text="v3.2",
+        version_label = ttk.Label(header_frame, text="v3.3",
                                    font=('微软雅黑', 12), foreground='#94a3b8')
         version_label.pack(side=tk.LEFT, padx=(10, 0))
 
@@ -214,7 +213,7 @@ class MicroCTApp:
         self.log_text.tag_config('error', foreground='#dc2626')
         self.log_text.tag_config('detail', foreground='#94a3b8')
 
-        self._log("🚀 欢迎使用 MicroCT 骨参数自动提取工具 v3.2", 'info')
+        self._log("🚀 欢迎使用 MicroCT 骨参数自动提取工具 v3.3", 'info')
         self._log("💡 正在加载配置，请稍候...", 'info')
 
     def _on_template_selected(self, value):
@@ -246,11 +245,6 @@ class MicroCTApp:
         self.stats_labels['error'].config(text=str(error))
 
     def _load_config(self):
-        # 如果已经加载过则跳过
-        if self._config_loaded:
-            return
-        self._config_loaded = True
-
         from config_loader import update_config_if_needed
         update_config_if_needed(self.config_path.get())
 
@@ -379,7 +373,7 @@ class MicroCTApp:
 
     def _show_help(self):
         help_text = """
-🦴 MicroCT 骨参数自动提取工具 v3.2
+🦴 MicroCT 骨参数自动提取工具 v3.3
 
 【📖 使用说明】
 1. 选择或创建配置文件（.xlsx格式），点击"创建默认"生成
