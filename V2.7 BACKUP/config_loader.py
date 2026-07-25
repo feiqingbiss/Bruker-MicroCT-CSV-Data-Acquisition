@@ -6,7 +6,6 @@
 
 import os
 import pandas as pd
-import numpy as np
 
 
 class ConfigLoader:
@@ -19,7 +18,6 @@ class ConfigLoader:
         self.template_names = []
         self.path_rules = {}
         self.gray_unit_config = {}
-        self.template_id_rules = {}  # 存储每个模板的样品ID规则
         self._loaded = False
 
     def load(self, config_path=None):
@@ -29,7 +27,7 @@ class ConfigLoader:
             raise FileNotFoundError(f"配置文件不存在: {self.config_path}")
         try:
             xl = pd.ExcelFile(self.config_path)
-
+            
             # ---- ParamDef ----
             try:
                 if 'ParamDef' in xl.sheet_names:
@@ -47,7 +45,7 @@ class ConfigLoader:
                         }
             except Exception as e:
                 raise Exception(f"加载 ParamDef 工作表失败: {e}")
-
+            
             # ---- ExtractRules ----
             try:
                 if 'ExtractRules' in xl.sheet_names:
@@ -67,7 +65,7 @@ class ConfigLoader:
                         }
             except Exception as e:
                 raise Exception(f"加载 ExtractRules 工作表失败: {e}")
-
+            
             # ---- CalcParams ----
             try:
                 if 'CalcParams' in xl.sheet_names:
@@ -82,49 +80,33 @@ class ConfigLoader:
                         }
             except Exception as e:
                 raise Exception(f"加载 CalcParams 工作表失败: {e}")
-
+            
             # ---- TemplateDef ----
             try:
                 if 'TemplateDef' in xl.sheet_names:
                     df = pd.read_excel(self.config_path, sheet_name='TemplateDef')
-                    # 确保有"样品ID规则"列
-                    if '样品ID规则' not in df.columns:
-                        df['样品ID规则'] = ''
                     df = df.sort_values(['模板名称', '顺序'])
                     self.template_names = df['模板名称'].unique().tolist()
                     self.template_def = []
-                    self.template_id_rules = {}
                     for _, row in df.iterrows():
-                        template = str(row.get('模板名称', '默认')).strip()
                         self.template_def.append({
                             'column_name': str(row['列名']).strip(),
                             'extract_id': str(row['提取指令']).strip(),
                             'order': int(row['顺序']),
-                            'template': template,
+                            'template': str(row.get('模板名称', '默认')).strip(),
                         })
-                        id_rule = str(row.get('样品ID规则', '')).strip()
-                        # 过滤掉 'nan' 或空字符串
-                        if id_rule and id_rule.lower() != 'nan':
-                            self.template_id_rules[template] = id_rule
             except Exception as e:
                 raise Exception(f"加载 TemplateDef 工作表失败: {e}")
-
+            
             # ---- PathRules ----
             try:
                 if 'PathRules' in xl.sheet_names:
                     df = pd.read_excel(self.config_path, sheet_name='PathRules')
                     for _, row in df.iterrows():
-                        key = str(row['配置项']).strip()
-                        val = row['值']
-                        # ★ 处理 NaN、None、空值
-                        if pd.isna(val) or val is None:
-                            val = ''
-                        else:
-                            val = str(val).strip()
-                        self.path_rules[key] = val
+                        self.path_rules[str(row['配置项']).strip()] = str(row['值']).strip()
             except Exception as e:
                 raise Exception(f"加载 PathRules 工作表失败: {e}")
-
+            
             # ---- GrayUnitConfig ----
             try:
                 if 'GrayUnitConfig' in xl.sheet_names:
@@ -133,10 +115,10 @@ class ConfigLoader:
                         self.gray_unit_config[str(row['配置项']).strip()] = str(row['值']).strip()
             except Exception as e:
                 raise Exception(f"加载 GrayUnitConfig 工作表失败: {e}")
-
+            
             self._loaded = True
             return True
-
+            
         except Exception as e:
             raise Exception(f"配置文件加载失败: {e}")
 
@@ -155,28 +137,10 @@ class ConfigLoader:
     def is_loaded(self):
         return self._loaded
 
-    # ★ 关键修复：确保永远不返回空值或 'nan'
-    def get_sample_id_rule(self, template_name):
-        """
-        获取指定模板的样品ID规则，若模板有自定义则返回，否则返回全局规则。
-        如果全局规则为空或无效，则返回默认值 '{parent}_{file_prefix}'。
-        """
-        # 1. 模板自定义规则
-        if template_name in self.template_id_rules:
-            return self.template_id_rules[template_name]
-
-        # 2. 全局规则
-        rule = self.path_rules.get('样品ID规则', '')
-
-        # 3. 彻底清理空值和 'nan'
-        if rule is None or rule == '' or str(rule).lower() == 'nan':
-            rule = '{parent}_{file_prefix}'
-
-        return rule
-
 
 def generate_default_config(path):
     """生成默认配置文件，包含全部2D/3D参数以及多种直方图参数"""
+
     # ---- 完整的2D参数（37个） ----
     params_2d = [
         ('PosZ', 'Z position', 'Pos.Z', 'um'),
@@ -314,6 +278,8 @@ def generate_default_config(path):
 
         # ---- ExtractRules ----
         extract_rows = []
+
+        # 松质骨 3D (_trab_3D)
         for pid, name, col, unit in params_3d:
             extract_rows.append({
                 '指令ID': f'{pid}_trab_3D',
@@ -324,6 +290,8 @@ def generate_default_config(path):
                 '提取方式': 'direct',
                 '偏移量': 0
             })
+
+        # 皮质骨 3D (_cort_3D)
         for pid, name, col, unit in params_3d:
             extract_rows.append({
                 '指令ID': f'{pid}_cort_3D',
@@ -334,6 +302,8 @@ def generate_default_config(path):
                 '提取方式': 'direct',
                 '偏移量': 0
             })
+
+        # 皮质骨 2D (_cort_2D)
         for pid, name, col, unit in params_2d:
             extract_rows.append({
                 '指令ID': f'{pid}_cort_2D',
@@ -344,6 +314,8 @@ def generate_default_config(path):
                 '提取方式': 'direct',
                 '偏移量': 0
             })
+
+        # ---- 直方图参数（松质/皮质各自独立） ----
         for pid, name, col, unit in params_hist:
             extract_rows.append({
                 '指令ID': f'{pid}_trab_H',
@@ -363,6 +335,7 @@ def generate_default_config(path):
                 '提取方式': 'direct',
                 '偏移量': 0
             })
+
         pd.DataFrame(extract_rows).to_excel(writer, sheet_name='ExtractRules', index=False)
 
         # ---- CalcParams ----
@@ -374,69 +347,69 @@ def generate_default_config(path):
         ])
         calc_params.to_excel(writer, sheet_name='CalcParams', index=False)
 
-        # ---- TemplateDef（包含"样品ID规则"列） ----
+        # ---- TemplateDef（三个模板） ----
         template_def_rows = [
             # 模板1：标准模板（长骨专用，松质+皮质）
-            {'模板名称': '标准模板（长骨专用）区分松质骨皮质骨参数', '列名': '日期', '提取指令': 'DATE_META', '顺序': 1, '样品ID规则': ''},
-            {'模板名称': '标准模板（长骨专用）区分松质骨皮质骨参数', '列名': '样品ID', '提取指令': 'SAMPLE_ID_META', '顺序': 2, '样品ID规则': ''},
-            {'模板名称': '标准模板（长骨专用）区分松质骨皮质骨参数', '列名': 'BMD (g/cm3)', '提取指令': 'BMD_trab_H', '顺序': 3, '样品ID规则': ''},
-            {'模板名称': '标准模板（长骨专用）区分松质骨皮质骨参数', '列名': 'TV(um3)', '提取指令': 'TV_trab_3D', '顺序': 4, '样品ID规则': ''},
-            {'模板名称': '标准模板（长骨专用）区分松质骨皮质骨参数', '列名': 'BV(um3)', '提取指令': 'BV_trab_3D', '顺序': 5, '样品ID规则': ''},
-            {'模板名称': '标准模板（长骨专用）区分松质骨皮质骨参数', '列名': 'BV/TV(%)', '提取指令': 'BVTV_trab_3D', '顺序': 6, '样品ID规则': ''},
-            {'模板名称': '标准模板（长骨专用）区分松质骨皮质骨参数', '列名': 'BS/BV (1/um)', '提取指令': 'BSBV_trab_3D', '顺序': 7, '样品ID规则': ''},
-            {'模板名称': '标准模板（长骨专用）区分松质骨皮质骨参数', '列名': 'Tb.Th (um)', '提取指令': 'TbTh_trab_3D', '顺序': 8, '样品ID规则': ''},
-            {'模板名称': '标准模板（长骨专用）区分松质骨皮质骨参数', '列名': 'Tb.Sp (um)', '提取指令': 'TbSp_trab_3D', '顺序': 9, '样品ID规则': ''},
-            {'模板名称': '标准模板（长骨专用）区分松质骨皮质骨参数', '列名': 'Tb.N (1/um)', '提取指令': 'TbN_trab_3D', '顺序': 10, '样品ID规则': ''},
-            {'模板名称': '标准模板（长骨专用）区分松质骨皮质骨参数', '列名': 'BMD (g/cm3)', '提取指令': 'BMD_cort_H', '顺序': 11, '样品ID规则': ''},
-            {'模板名称': '标准模板（长骨专用）区分松质骨皮质骨参数', '列名': 'BV/TV(%)', '提取指令': 'BVTV_cort_3D', '顺序': 12, '样品ID规则': ''},
-            {'模板名称': '标准模板（长骨专用）区分松质骨皮质骨参数', '列名': 'BS/BV (1/um)', '提取指令': 'BSBV_cort_3D', '顺序': 13, '样品ID规则': ''},
-            {'模板名称': '标准模板（长骨专用）区分松质骨皮质骨参数', '列名': 'Ct.Th (um)', '提取指令': 'TbTh_cort_3D', '顺序': 14, '样品ID规则': ''},
-            {'模板名称': '标准模板（长骨专用）区分松质骨皮质骨参数', '列名': 'Po(cl)(%)', '提取指令': 'Po_cl_cort_3D', '顺序': 15, '样品ID规则': ''},
-            {'模板名称': '标准模板（长骨专用）区分松质骨皮质骨参数', '列名': 'Po(tot)(%)', '提取指令': 'Po_tot_cort_3D', '顺序': 16, '样品ID规则': ''},
-            {'模板名称': '标准模板（长骨专用）区分松质骨皮质骨参数', '列名': 'T.Ar(um^2)', '提取指令': 'TAr_cort_2D', '顺序': 17, '样品ID规则': ''},
-            {'模板名称': '标准模板（长骨专用）区分松质骨皮质骨参数', '列名': 'B.Ar(um^2)', '提取指令': 'BAr_calc', '顺序': 18, '样品ID规则': ''},
-            {'模板名称': '标准模板（长骨专用）区分松质骨皮质骨参数', '列名': 'M.Ar(um^2)', '提取指令': 'BAr_cort_2D', '顺序': 19, '样品ID规则': ''},
-            {'模板名称': '标准模板（长骨专用）区分松质骨皮质骨参数', '列名': 'B.Ar/T.Ar(%)', '提取指令': 'BArRatio_calc', '顺序': 20, '样品ID规则': ''},
-            {'模板名称': '标准模板（长骨专用）区分松质骨皮质骨参数', '列名': 'T.Pm(um)', '提取指令': 'TPm_cort_2D', '顺序': 21, '样品ID规则': ''},
-            {'模板名称': '标准模板（长骨专用）区分松质骨皮质骨参数', '列名': 'M.Pm(um)', '提取指令': 'BPm_cort_2D', '顺序': 22, '样品ID规则': ''},
+            {'模板名称': '标准模板（长骨专用）区分松质骨皮质骨参数', '列名': '日期', '提取指令': 'DATE_META', '顺序': 1},
+            {'模板名称': '标准模板（长骨专用）区分松质骨皮质骨参数', '列名': '样品ID', '提取指令': 'SAMPLE_ID_META', '顺序': 2},
+            {'模板名称': '标准模板（长骨专用）区分松质骨皮质骨参数', '列名': 'BMD (g/cm3)', '提取指令': 'BMD_trab_H', '顺序': 3},
+            {'模板名称': '标准模板（长骨专用）区分松质骨皮质骨参数', '列名': 'TV(um3)', '提取指令': 'TV_trab_3D', '顺序': 4},
+            {'模板名称': '标准模板（长骨专用）区分松质骨皮质骨参数', '列名': 'BV(um3)', '提取指令': 'BV_trab_3D', '顺序': 5},
+            {'模板名称': '标准模板（长骨专用）区分松质骨皮质骨参数', '列名': 'BV/TV(%)', '提取指令': 'BVTV_trab_3D', '顺序': 6},
+            {'模板名称': '标准模板（长骨专用）区分松质骨皮质骨参数', '列名': 'BS/BV (1/um)', '提取指令': 'BSBV_trab_3D', '顺序': 7},
+            {'模板名称': '标准模板（长骨专用）区分松质骨皮质骨参数', '列名': 'Tb.Th (um)', '提取指令': 'TbTh_trab_3D', '顺序': 8},
+            {'模板名称': '标准模板（长骨专用）区分松质骨皮质骨参数', '列名': 'Tb.Sp (um)', '提取指令': 'TbSp_trab_3D', '顺序': 9},
+            {'模板名称': '标准模板（长骨专用）区分松质骨皮质骨参数', '列名': 'Tb.N (1/um)', '提取指令': 'TbN_trab_3D', '顺序': 10},
+            {'模板名称': '标准模板（长骨专用）区分松质骨皮质骨参数', '列名': 'BMD (g/cm3)', '提取指令': 'BMD_cort_H', '顺序': 11},
+            {'模板名称': '标准模板（长骨专用）区分松质骨皮质骨参数', '列名': 'BV/TV(%)', '提取指令': 'BVTV_cort_3D', '顺序': 12},
+            {'模板名称': '标准模板（长骨专用）区分松质骨皮质骨参数', '列名': 'BS/BV (1/um)', '提取指令': 'BSBV_cort_3D', '顺序': 13},
+            {'模板名称': '标准模板（长骨专用）区分松质骨皮质骨参数', '列名': 'Ct.Th (um)', '提取指令': 'TbTh_cort_3D', '顺序': 14},
+            {'模板名称': '标准模板（长骨专用）区分松质骨皮质骨参数', '列名': 'Po(cl)(%)', '提取指令': 'Po_cl_cort_3D', '顺序': 15},
+            {'模板名称': '标准模板（长骨专用）区分松质骨皮质骨参数', '列名': 'Po(tot)(%)', '提取指令': 'Po_tot_cort_3D', '顺序': 16},
+            {'模板名称': '标准模板（长骨专用）区分松质骨皮质骨参数', '列名': 'T.Ar(um^2)', '提取指令': 'TAr_cort_2D', '顺序': 17},
+            {'模板名称': '标准模板（长骨专用）区分松质骨皮质骨参数', '列名': 'B.Ar(um^2)', '提取指令': 'BAr_calc', '顺序': 18},
+            {'模板名称': '标准模板（长骨专用）区分松质骨皮质骨参数', '列名': 'M.Ar(um^2)', '提取指令': 'BAr_cort_2D', '顺序': 19},
+            {'模板名称': '标准模板（长骨专用）区分松质骨皮质骨参数', '列名': 'B.Ar/T.Ar(%)', '提取指令': 'BArRatio_calc', '顺序': 20},
+            {'模板名称': '标准模板（长骨专用）区分松质骨皮质骨参数', '列名': 'T.Pm(um)', '提取指令': 'TPm_cort_2D', '顺序': 21},
+            {'模板名称': '标准模板（长骨专用）区分松质骨皮质骨参数', '列名': 'M.Pm(um)', '提取指令': 'BPm_cort_2D', '顺序': 22},
             # 模板2：通用模板（同一样品CSV内多ROI分析结果）
-            {'模板名称': '通用模板（同一样品CSV内多ROI分析结果）', '列名': '日期', '提取指令': 'DATE_META', '顺序': 1, '样品ID规则': ''},
-            {'模板名称': '通用模板（同一样品CSV内多ROI分析结果）', '列名': '样品ID', '提取指令': 'SAMPLE_ID_META', '顺序': 2, '样品ID规则': ''},
-            {'模板名称': '通用模板（同一样品CSV内多ROI分析结果）', '列名': 'BMD (g/cm3)', '提取指令': 'BMD_trab_H', '顺序': 3, '样品ID规则': ''},
-            {'模板名称': '通用模板（同一样品CSV内多ROI分析结果）', '列名': 'TV(um3)', '提取指令': 'TV_trab_3D', '顺序': 4, '样品ID规则': ''},
-            {'模板名称': '通用模板（同一样品CSV内多ROI分析结果）', '列名': 'BV(um3)', '提取指令': 'BV_trab_3D', '顺序': 5, '样品ID规则': ''},
-            {'模板名称': '通用模板（同一样品CSV内多ROI分析结果）', '列名': 'BV/TV(%)', '提取指令': 'BVTV_trab_3D', '顺序': 6, '样品ID规则': ''},
-            {'模板名称': '通用模板（同一样品CSV内多ROI分析结果）', '列名': 'BS/BV (1/um)', '提取指令': 'BSBV_trab_3D', '顺序': 7, '样品ID规则': ''},
-            {'模板名称': '通用模板（同一样品CSV内多ROI分析结果）', '列名': 'Tb.Th (um)', '提取指令': 'TbTh_trab_3D', '顺序': 8, '样品ID规则': ''},
-            {'模板名称': '通用模板（同一样品CSV内多ROI分析结果）', '列名': 'Tb.Sp (um)', '提取指令': 'TbSp_trab_3D', '顺序': 9, '样品ID规则': ''},
-            {'模板名称': '通用模板（同一样品CSV内多ROI分析结果）', '列名': 'Tb.N (1/um)', '提取指令': 'TbN_trab_3D', '顺序': 10, '样品ID规则': ''},
-            {'模板名称': '通用模板（同一样品CSV内多ROI分析结果）', '列名': 'Po.N(cl)', '提取指令': 'PoNcl3D_trab_3D', '顺序': 11, '样品ID规则': ''},
-            {'模板名称': '通用模板（同一样品CSV内多ROI分析结果）', '列名': 'Po.V(cl)(um3)', '提取指令': 'PoVcl_trab_3D', '顺序': 12, '样品ID规则': ''},
-            {'模板名称': '通用模板（同一样品CSV内多ROI分析结果）', '列名': 'Po.S(cl)(um2)', '提取指令': 'PoScl_trab_3D', '顺序': 13, '样品ID规则': ''},
-            {'模板名称': '通用模板（同一样品CSV内多ROI分析结果）', '列名': 'Po(cl)(%)', '提取指令': 'Po_cl_trab_3D', '顺序': 14, '样品ID规则': ''},
-            {'模板名称': '通用模板（同一样品CSV内多ROI分析结果）', '列名': 'Po.V(op)(um3)', '提取指令': 'PoVop_trab_3D', '顺序': 15, '样品ID规则': ''},
-            {'模板名称': '通用模板（同一样品CSV内多ROI分析结果）', '列名': 'Po(op)(%)', '提取指令': 'Po_op3D_trab_3D', '顺序': 16, '样品ID规则': ''},
-            {'模板名称': '通用模板（同一样品CSV内多ROI分析结果）', '列名': 'Po.V(tot)(um3)', '提取指令': 'PoVtot_trab_3D', '顺序': 17, '样品ID规则': ''},
-            {'模板名称': '通用模板（同一样品CSV内多ROI分析结果）', '列名': 'Po(tot)(%)', '提取指令': 'Po_tot_trab_3D', '顺序': 18, '样品ID规则': ''},
+            {'模板名称': '通用模板（同一样品CSV内多ROI分析结果）', '列名': '日期', '提取指令': 'DATE_META', '顺序': 1},
+            {'模板名称': '通用模板（同一样品CSV内多ROI分析结果）', '列名': '样品ID', '提取指令': 'SAMPLE_ID_META', '顺序': 2},
+            {'模板名称': '通用模板（同一样品CSV内多ROI分析结果）', '列名': 'BMD (g/cm3)', '提取指令': 'BMD_trab_H', '顺序': 3},
+            {'模板名称': '通用模板（同一样品CSV内多ROI分析结果）', '列名': 'TV(um3)', '提取指令': 'TV_trab_3D', '顺序': 4},
+            {'模板名称': '通用模板（同一样品CSV内多ROI分析结果）', '列名': 'BV(um3)', '提取指令': 'BV_trab_3D', '顺序': 5},
+            {'模板名称': '通用模板（同一样品CSV内多ROI分析结果）', '列名': 'BV/TV(%)', '提取指令': 'BVTV_trab_3D', '顺序': 6},
+            {'模板名称': '通用模板（同一样品CSV内多ROI分析结果）', '列名': 'BS/BV (1/um)', '提取指令': 'BSBV_trab_3D', '顺序': 7},
+            {'模板名称': '通用模板（同一样品CSV内多ROI分析结果）', '列名': 'Tb.Th (um)', '提取指令': 'TbTh_trab_3D', '顺序': 8},
+            {'模板名称': '通用模板（同一样品CSV内多ROI分析结果）', '列名': 'Tb.Sp (um)', '提取指令': 'TbSp_trab_3D', '顺序': 9},
+            {'模板名称': '通用模板（同一样品CSV内多ROI分析结果）', '列名': 'Tb.N (1/um)', '提取指令': 'TbN_trab_3D', '顺序': 10},
+            {'模板名称': '通用模板（同一样品CSV内多ROI分析结果）', '列名': 'Po.N(cl)', '提取指令': 'PoNcl3D_trab_3D', '顺序': 11},
+            {'模板名称': '通用模板（同一样品CSV内多ROI分析结果）', '列名': 'Po.V(cl)(um3)', '提取指令': 'PoVcl_trab_3D', '顺序': 12},
+            {'模板名称': '通用模板（同一样品CSV内多ROI分析结果）', '列名': 'Po.S(cl)(um2)', '提取指令': 'PoScl_trab_3D', '顺序': 13},
+            {'模板名称': '通用模板（同一样品CSV内多ROI分析结果）', '列名': 'Po(cl)(%)', '提取指令': 'Po_cl_trab_3D', '顺序': 14},
+            {'模板名称': '通用模板（同一样品CSV内多ROI分析结果）', '列名': 'Po.V(op)(um3)', '提取指令': 'PoVop_trab_3D', '顺序': 15},
+            {'模板名称': '通用模板（同一样品CSV内多ROI分析结果）', '列名': 'Po(op)(%)', '提取指令': 'Po_op3D_trab_3D', '顺序': 16},
+            {'模板名称': '通用模板（同一样品CSV内多ROI分析结果）', '列名': 'Po.V(tot)(um3)', '提取指令': 'PoVtot_trab_3D', '顺序': 17},
+            {'模板名称': '通用模板（同一样品CSV内多ROI分析结果）', '列名': 'Po(tot)(%)', '提取指令': 'Po_tot_trab_3D', '顺序': 18},
             # 模板3：通用模板（同一样品不同VOI数据结果）
-            {'模板名称': '通用模板（同一样品不同VOI数据结果）', '列名': '日期', '提取指令': 'DATE_META', '顺序': 1, '样品ID规则': ''},
-            {'模板名称': '通用模板（同一样品不同VOI数据结果）', '列名': '样品ID', '提取指令': 'SAMPLE_ID_META', '顺序': 2, '样品ID规则': ''},
-            {'模板名称': '通用模板（同一样品不同VOI数据结果）', '列名': 'BMD (g/cm3)', '提取指令': 'BMD_trab_H', '顺序': 3, '样品ID规则': ''},
-            {'模板名称': '通用模板（同一样品不同VOI数据结果）', '列名': 'TV(um3)', '提取指令': 'TV_trab_3D', '顺序': 4, '样品ID规则': ''},
-            {'模板名称': '通用模板（同一样品不同VOI数据结果）', '列名': 'BV(um3)', '提取指令': 'BV_trab_3D', '顺序': 5, '样品ID规则': ''},
-            {'模板名称': '通用模板（同一样品不同VOI数据结果）', '列名': 'BV/TV(%)', '提取指令': 'BVTV_trab_3D', '顺序': 6, '样品ID规则': ''},
-            {'模板名称': '通用模板（同一样品不同VOI数据结果）', '列名': 'BS/BV (1/um)', '提取指令': 'BSBV_trab_3D', '顺序': 7, '样品ID规则': ''},
-            {'模板名称': '通用模板（同一样品不同VOI数据结果）', '列名': 'Tb.Th (um)', '提取指令': 'TbTh_trab_3D', '顺序': 8, '样品ID规则': ''},
-            {'模板名称': '通用模板（同一样品不同VOI数据结果）', '列名': 'Tb.Sp (um)', '提取指令': 'TbSp_trab_3D', '顺序': 9, '样品ID规则': ''},
-            {'模板名称': '通用模板（同一样品不同VOI数据结果）', '列名': 'Tb.N (1/um)', '提取指令': 'TbN_trab_3D', '顺序': 10, '样品ID规则': ''},
-            {'模板名称': '通用模板（同一样品不同VOI数据结果）', '列名': 'Po.N(cl)', '提取指令': 'PoNcl3D_trab_3D', '顺序': 11, '样品ID规则': ''},
-            {'模板名称': '通用模板（同一样品不同VOI数据结果）', '列名': 'Po.V(cl)(um3)', '提取指令': 'PoVcl_trab_3D', '顺序': 12, '样品ID规则': ''},
-            {'模板名称': '通用模板（同一样品不同VOI数据结果）', '列名': 'Po.S(cl)(um2)', '提取指令': 'PoScl_trab_3D', '顺序': 13, '样品ID规则': ''},
-            {'模板名称': '通用模板（同一样品不同VOI数据结果）', '列名': 'Po(cl)(%)', '提取指令': 'Po_cl_trab_3D', '顺序': 14, '样品ID规则': ''},
-            {'模板名称': '通用模板（同一样品不同VOI数据结果）', '列名': 'Po.V(op)(um3)', '提取指令': 'PoVop_trab_3D', '顺序': 15, '样品ID规则': ''},
-            {'模板名称': '通用模板（同一样品不同VOI数据结果）', '列名': 'Po(op)(%)', '提取指令': 'Po_op3D_trab_3D', '顺序': 16, '样品ID规则': ''},
-            {'模板名称': '通用模板（同一样品不同VOI数据结果）', '列名': 'Po.V(tot)(um3)', '提取指令': 'PoVtot_trab_3D', '顺序': 17, '样品ID规则': ''},
-            {'模板名称': '通用模板（同一样品不同VOI数据结果）', '列名': 'Po(tot)(%)', '提取指令': 'Po_tot_trab_3D', '顺序': 18, '样品ID规则': ''},
+            {'模板名称': '通用模板（同一样品不同VOI数据结果）', '列名': '日期', '提取指令': 'DATE_META', '顺序': 1},
+            {'模板名称': '通用模板（同一样品不同VOI数据结果）', '列名': '样品ID', '提取指令': 'SAMPLE_ID_META', '顺序': 2},
+            {'模板名称': '通用模板（同一样品不同VOI数据结果）', '列名': 'BMD (g/cm3)', '提取指令': 'BMD_trab_H', '顺序': 3},
+            {'模板名称': '通用模板（同一样品不同VOI数据结果）', '列名': 'TV(um3)', '提取指令': 'TV_trab_3D', '顺序': 4},
+            {'模板名称': '通用模板（同一样品不同VOI数据结果）', '列名': 'BV(um3)', '提取指令': 'BV_trab_3D', '顺序': 5},
+            {'模板名称': '通用模板（同一样品不同VOI数据结果）', '列名': 'BV/TV(%)', '提取指令': 'BVTV_trab_3D', '顺序': 6},
+            {'模板名称': '通用模板（同一样品不同VOI数据结果）', '列名': 'BS/BV (1/um)', '提取指令': 'BSBV_trab_3D', '顺序': 7},
+            {'模板名称': '通用模板（同一样品不同VOI数据结果）', '列名': 'Tb.Th (um)', '提取指令': 'TbTh_trab_3D', '顺序': 8},
+            {'模板名称': '通用模板（同一样品不同VOI数据结果）', '列名': 'Tb.Sp (um)', '提取指令': 'TbSp_trab_3D', '顺序': 9},
+            {'模板名称': '通用模板（同一样品不同VOI数据结果）', '列名': 'Tb.N (1/um)', '提取指令': 'TbN_trab_3D', '顺序': 10},
+            {'模板名称': '通用模板（同一样品不同VOI数据结果）', '列名': 'Po.N(cl)', '提取指令': 'PoNcl3D_trab_3D', '顺序': 11},
+            {'模板名称': '通用模板（同一样品不同VOI数据结果）', '列名': 'Po.V(cl)(um3)', '提取指令': 'PoVcl_trab_3D', '顺序': 12},
+            {'模板名称': '通用模板（同一样品不同VOI数据结果）', '列名': 'Po.S(cl)(um2)', '提取指令': 'PoScl_trab_3D', '顺序': 13},
+            {'模板名称': '通用模板（同一样品不同VOI数据结果）', '列名': 'Po(cl)(%)', '提取指令': 'Po_cl_trab_3D', '顺序': 14},
+            {'模板名称': '通用模板（同一样品不同VOI数据结果）', '列名': 'Po.V(op)(um3)', '提取指令': 'PoVop_trab_3D', '顺序': 15},
+            {'模板名称': '通用模板（同一样品不同VOI数据结果）', '列名': 'Po(op)(%)', '提取指令': 'Po_op3D_trab_3D', '顺序': 16},
+            {'模板名称': '通用模板（同一样品不同VOI数据结果）', '列名': 'Po.V(tot)(um3)', '提取指令': 'PoVtot_trab_3D', '顺序': 17},
+            {'模板名称': '通用模板（同一样品不同VOI数据结果）', '列名': 'Po(tot)(%)', '提取指令': 'Po_tot_trab_3D', '顺序': 18},
         ]
 
         template_def = pd.DataFrame(template_def_rows)
@@ -445,7 +418,7 @@ def generate_default_config(path):
         # ---- PathRules ----
         pd.DataFrame([
             {'配置项': 'ID提取方式', '值': 'parent_folder_file_prefix'},
-            {'配置项': '样品ID规则', '值': '{parent}_{file_prefix}'},  # 全局默认规则
+            {'配置项': '样品ID规则', '值': '{parent}_{file_prefix}'},  # 新增，用于自定义组合
             {'配置项': '日期提取方式', '值': 'csv_header'},
         ]).to_excel(writer, sheet_name='PathRules', index=False)
 

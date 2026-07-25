@@ -185,7 +185,6 @@ class SampleProcessor:
         files_sorted = sorted(files, key=sort_key)
         self._log(f"处理样品: {sample_id} (扫描到 {len(files_sorted)} 个文件夹)")
 
-        # ---- 第一步：提取每个文件夹的数据，并标记有效性 ----
         voi_rows = []
         for file_info in files_sorted:
             parser = file_info['parser']
@@ -195,7 +194,7 @@ class SampleProcessor:
                 voi_idx=file_info.get('voi_idx', 0)
             )
 
-            # ★ 检查该行是否有任何有效参数值（排除元数据列）
+            # 检查是否有有效数据（排除元数据列）
             columns = self.config.get_template_columns(self.template_name)
             has_data = False
             for col in columns:
@@ -215,7 +214,6 @@ class SampleProcessor:
             self._log(f"  ⚠ 没有有效数据，跳过样品 {sample_id}", 'warning')
             return
 
-        # ---- 第二步：合并有效组 ----
         self._log(f"  📊 实际合并 {len(voi_rows)} 个有效文件夹，列表: {[r.get('FOLDER_NAME', '') for r in voi_rows]}", 'info')
         merged_row = self._merge_voi_rows_with_spacer(voi_rows, sample_id)
         self.results.append(merged_row)
@@ -478,7 +476,7 @@ class SampleProcessor:
             self._add_error(sample_id, parser.file_path if parser else '', calc_id, f"计算失败: {calc_id} - {e}")
             return None
 
-    # ------ ★ 每组之间插入2列空白 ------
+    # ------ ★ 合并VOI行，每组之间插入2列空白 ------
 
     def _merge_voi_rows_with_spacer(self, rows, sample_id):
         """
@@ -521,25 +519,18 @@ class SampleProcessor:
 
         return base_row
 
-    # ------ 导出方法（强制只保留2列空白列） ------
+    # ------ 导出方法 ------
 
     def export_to_excel(self, output_path):
         if not self.results:
             self._log("没有数据可导出")
             return False
 
+        # ---- VOI模式：保留所有空白列，每组之间2列 ----
         if self.is_voi_mode:
             df = pd.DataFrame(self.results)
-            cols = df.columns.tolist()
-            blank_cols = [c for c in cols if '空白' in c]
-            # 如果空白列超过2列，只保留前2个，删除多余的
-            if len(blank_cols) > 2:
-                keep_blank = blank_cols[:2]
-                remove_blank = blank_cols[2:]
-                df = df.drop(columns=remove_blank)
-                cols = [c for c in cols if c not in remove_blank]
-            # 将空白列名替换为空字符串
-            df.columns = ['' if '空白' in col else col for col in cols]
+            # 将所有包含"空白"的列名替换为空字符串（Excel中显示为空白列）
+            df.columns = ['' if '空白' in col else col for col in df.columns]
             # 确保日期和样品ID在最前面
             current_cols = df.columns.tolist()
             ordered_cols = []
@@ -554,25 +545,17 @@ class SampleProcessor:
             self._log(f"已导出到: {output_path}")
             return True
 
-        # ---- 单文件模式：横向展开多个结果 ----
+        # ---- 单文件模式：横向展开多个结果，每组之间2列空白 ----
         if self.is_single_mode:
             columns = self.config.get_template_columns(self.template_name)
             columns = sorted(columns, key=lambda x: x['order'])
             col_names = [c['column_name'] for c in columns]
             col_extract_ids = [c['extract_id'] for c in columns]
 
-            data_rows = []
-            for row_data in self.results:
-                row = [row_data.get(eid, None) for eid in col_extract_ids]
-                data_rows.append(row)
-
-            sample_id_col_index = 1
-            base_cols_count = 2
-            param_cols = col_names[base_cols_count:]
-
+            # 按基础样品ID分组
             groups = {}
-            for row in data_rows:
-                sample_id = row[sample_id_col_index] if sample_id_col_index < len(row) else ''
+            for row_data in self.results:
+                sample_id = row_data.get('SAMPLE_ID_META', '')
                 base_sample = sample_id
                 if sample_id:
                     match = re.match(r'(.+)_R\d+$', sample_id)
@@ -580,40 +563,36 @@ class SampleProcessor:
                         base_sample = match.group(1)
                     else:
                         base_sample = sample_id
-                if base_sample not in groups:
-                    groups[base_sample] = []
-                groups[base_sample].append(row)
+                groups.setdefault(base_sample, []).append(row_data)
 
-            max_results = 0
-            for rows in groups.values():
-                if len(rows) > max_results:
-                    max_results = len(rows)
+            max_results = max((len(rows) for rows in groups.values()), default=0)
 
             expanded_rows = []
             for base_sample, rows in groups.items():
-                date_val = rows[0][0] if rows[0] else None
+                date_val = rows[0].get('DATE_META', None)
                 new_row = [date_val, base_sample]
                 for idx in range(max_results):
                     if idx < len(rows):
-                        row = rows[idx]
-                        param_values = row[base_cols_count:] if len(row) > base_cols_count else []
-                        while len(param_values) < len(param_cols):
-                            param_values.append(None)
-                        new_row.extend(param_values)
+                        row_dict = rows[idx]
+                        param_values = [row_dict.get(eid, None) for eid in col_extract_ids if eid not in ['DATE_META', 'SAMPLE_ID_META']]
                     else:
-                        new_row.extend([None] * len(param_cols))
+                        param_values = [None] * (len(col_extract_ids) - 2)
+                    new_row.extend(param_values)
                     if idx < max_results - 1:
-                        new_row.extend([None, None])
+                        new_row.extend([None, None])  # 两组之间2列空白
                 expanded_rows.append(new_row)
 
+            # 动态生成列名
             new_col_names = ['日期', '样品ID']
             for idx in range(max_results):
                 suffix = f"_结果{idx+1}" if max_results > 1 else ""
-                for param in param_cols:
-                    new_col_names.append(f"{param}{suffix}")
+                for col_name in col_names:
+                    if col_name not in ['日期', '样品ID']:
+                        new_col_names.append(f"{col_name}{suffix}")
                 if idx < max_results - 1:
                     new_col_names.append("")
                     new_col_names.append("")
+
             df = pd.DataFrame(expanded_rows, columns=new_col_names)
             df.to_excel(output_path, index=False, sheet_name='结果')
             self._log(f"已导出到: {output_path}")

@@ -77,7 +77,9 @@ class SampleProcessor:
 
     def scan_files(self):
         self._log("正在扫描CSV文件...")
-        id_method = self.config.path_rules.get('ID提取方式', 'parent_folder_file_prefix')
+        id_rule = self.config.get_sample_id_rule(self.template_name)
+        self._log(f"样品ID规则: {id_rule}", 'info')
+
         csv_files = glob.glob(os.path.join(self.root_dir, '**', '*.csv'), recursive=True)
         self._log(f"找到 {len(csv_files)} 个CSV文件")
         valid_count = 0
@@ -103,7 +105,7 @@ class SampleProcessor:
                 folder_name = os.path.basename(os.path.dirname(file_path))
                 is_voi_pattern, voi_idx = extract_voi_index(file_path)
             else:
-                sample_id = extract_sample_id(file_path, id_method)
+                sample_id = extract_sample_id(file_path, id_rule)
                 if not sample_id:
                     self._log(f"警告: 无法提取样品ID: {file_path}", 'warning')
                     self._add_warning('unknown', file_path, f"无法提取样品ID: {file_path}")
@@ -194,7 +196,6 @@ class SampleProcessor:
                 voi_idx=file_info.get('voi_idx', 0)
             )
 
-            # 检查是否有有效数据（排除元数据列）
             columns = self.config.get_template_columns(self.template_name)
             has_data = False
             for col in columns:
@@ -291,15 +292,16 @@ class SampleProcessor:
                 self._log(f"      {status} {extract_id}{idx_info} ← {source} = {value}", 'detail')
             if value is None and source != 'Histogram':
                 self._add_error(sample_id, parser.file_path if parser else '', extract_id, f"提取失败: {extract_id} 返回 None")
-        # 计算参数
+
         for col_def in columns:
             extract_id = col_def['extract_id']
             if extract_id in self.config.calc_params:
-                calc_result = self._calc_param_single(extract_id, extracted_values, sample_id, parser)
+                calc_result = self._calc_param(extract_id, extracted_values, sample_id, parser)
                 extracted_values[extract_id] = calc_result
                 if self.verbose:
                     status = '✓' if calc_result is not None else '✗'
                     self._log(f"      [计算] {extract_id} {status} = {calc_result}", 'detail')
+
         for extract_id, value in extracted_values.items():
             row_data[extract_id] = value
         self.results.append(row_data)
@@ -333,11 +335,11 @@ class SampleProcessor:
             elif source == 'Histogram':
                 value = parser.extract_histogram_value(param_id, 0)
             row_data[extract_id] = value
-        # 计算参数
+
         for col_def in columns:
             extract_id = col_def['extract_id']
             if extract_id in self.config.calc_params:
-                calc_result = self._calc_param_single(extract_id, row_data, sample_id, parser)
+                calc_result = self._calc_param(extract_id, row_data, sample_id, parser)
                 row_data[extract_id] = calc_result
         return row_data
 
@@ -399,15 +401,16 @@ class SampleProcessor:
                 elif '_cort_' in extract_id and cort_parser:
                     file_path = cort_parser.file_path
                 self._add_error(sample_id, file_path, extract_id, f"提取失败: {extract_id} 返回 None")
-        # 计算参数
+
         for col_def in columns:
             extract_id = col_def['extract_id']
             if extract_id in self.config.calc_params:
-                calc_result = self._calc_param_pair(extract_id, extracted_values, sample_id, parser)
+                calc_result = self._calc_param(extract_id, extracted_values, sample_id, parser)
                 extracted_values[extract_id] = calc_result
                 if self.verbose:
                     status = '✓' if calc_result is not None else '✗'
                     self._log(f"      [计算] {extract_id} {status} = {calc_result}", 'detail')
+
         for extract_id, value in extracted_values.items():
             row_data[extract_id] = value
         self.results.append(row_data)
@@ -416,9 +419,8 @@ class SampleProcessor:
         self._log(f"  ✅ 提取汇总: ✓ {extracted_count} 个参数, ✗ {failed_count} 个参数缺失",
                   'success' if failed_count == 0 else 'warning')
 
-    # ------ 计算参数辅助方法 ------
-
-    def _calc_param_single(self, calc_id, extracted_values, sample_id, parser):
+    def _calc_param(self, calc_id, extracted_values, sample_id, parser):
+        """统一的计算参数方法"""
         calc_def = self.config.get_calc_param(calc_id)
         if not calc_def:
             self._add_warning(sample_id, parser.file_path if parser else '', f"计算参数定义缺失: {calc_id}", calc_id)
@@ -434,7 +436,8 @@ class SampleProcessor:
                 deps[ph] = None
                 missing.append(ph)
         if missing:
-            self._add_warning(sample_id, parser.file_path if parser else '', f"计算参数 {calc_id} 依赖缺失: {', '.join(missing)}", calc_id)
+            self._add_warning(sample_id, parser.file_path if parser else '',
+                             f"计算参数 {calc_id} 依赖缺失: {', '.join(missing)}", calc_id)
             return None
         expr = formula
         for ph in placeholders:
@@ -446,42 +449,9 @@ class SampleProcessor:
         except Exception as e:
             self._add_error(sample_id, parser.file_path if parser else '', calc_id, f"计算失败: {calc_id} - {e}")
             return None
-
-    def _calc_param_pair(self, calc_id, extracted_values, sample_id, parser):
-        calc_def = self.config.get_calc_param(calc_id)
-        if not calc_def:
-            self._add_warning(sample_id, parser.file_path if parser else '', f"计算参数定义缺失: {calc_id}", calc_id)
-            return None
-        formula = calc_def.get('formula', '')
-        placeholders = re.findall(r'\{([^}]+)\}', formula)
-        deps = {}
-        missing = []
-        for ph in placeholders:
-            if ph in extracted_values:
-                deps[ph] = extracted_values[ph]
-            else:
-                deps[ph] = None
-                missing.append(ph)
-        if missing:
-            self._add_warning(sample_id, parser.file_path if parser else '', f"计算参数 {calc_id} 依赖缺失: {', '.join(missing)}", calc_id)
-            return None
-        expr = formula
-        for ph in placeholders:
-            if deps.get(ph) is None:
-                return None
-            expr = expr.replace(f'{{{ph}}}', str(deps[ph]))
-        try:
-            return eval(expr)
-        except Exception as e:
-            self._add_error(sample_id, parser.file_path if parser else '', calc_id, f"计算失败: {calc_id} - {e}")
-            return None
-
-    # ------ ★ 合并VOI行，每组之间插入2列空白 ------
 
     def _merge_voi_rows_with_spacer(self, rows, sample_id):
-        """
-        横向合并多个文件夹行，每组之间插入2列空白列。
-        """
+        """横向合并多个文件夹行，每组之间插入2列空白列"""
         if not rows:
             return {}
         base_row = {'日期': rows[0]['DATE_META'], '样品ID': sample_id}
@@ -493,7 +463,6 @@ class SampleProcessor:
                 id_to_col[eid] = col['column_name']
         param_ids = list(id_to_col.keys())
 
-        # 处理重复文件夹名
         folder_names = [row.get('FOLDER_NAME', f'Folder{i+1}') for i, row in enumerate(rows)]
         seen = {}
         unique_suffixes = []
@@ -519,8 +488,6 @@ class SampleProcessor:
 
         return base_row
 
-    # ------ 导出方法 ------
-
     def export_to_excel(self, output_path):
         if not self.results:
             self._log("没有数据可导出")
@@ -529,9 +496,7 @@ class SampleProcessor:
         # ---- VOI模式：保留所有空白列，每组之间2列 ----
         if self.is_voi_mode:
             df = pd.DataFrame(self.results)
-            # 将所有包含"空白"的列名替换为空字符串（Excel中显示为空白列）
             df.columns = ['' if '空白' in col else col for col in df.columns]
-            # 确保日期和样品ID在最前面
             current_cols = df.columns.tolist()
             ordered_cols = []
             for col in ['日期', '样品ID']:
@@ -545,14 +510,13 @@ class SampleProcessor:
             self._log(f"已导出到: {output_path}")
             return True
 
-        # ---- 单文件模式：横向展开多个结果，每组之间2列空白 ----
+        # ---- 单文件模式：横向展开多个结果 ----
         if self.is_single_mode:
             columns = self.config.get_template_columns(self.template_name)
             columns = sorted(columns, key=lambda x: x['order'])
             col_names = [c['column_name'] for c in columns]
             col_extract_ids = [c['extract_id'] for c in columns]
 
-            # 按基础样品ID分组
             groups = {}
             for row_data in self.results:
                 sample_id = row_data.get('SAMPLE_ID_META', '')
@@ -579,10 +543,9 @@ class SampleProcessor:
                         param_values = [None] * (len(col_extract_ids) - 2)
                     new_row.extend(param_values)
                     if idx < max_results - 1:
-                        new_row.extend([None, None])  # 两组之间2列空白
+                        new_row.extend([None, None])
                 expanded_rows.append(new_row)
 
-            # 动态生成列名
             new_col_names = ['日期', '样品ID']
             for idx in range(max_results):
                 suffix = f"_结果{idx+1}" if max_results > 1 else ""
